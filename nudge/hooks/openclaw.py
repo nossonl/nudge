@@ -46,7 +46,7 @@ def _status_response(self):
         "adapter": f"v{a['version']}" if a else "none",
         "ratings": counts["total"],
         "good": counts["good"], "bad": counts["bad"],
-        "untrained": counts["untrained"],
+        "untrained": db.count_trainable_untrained(conn),
         "ema": round(ema, 3),
     }).encode())
 

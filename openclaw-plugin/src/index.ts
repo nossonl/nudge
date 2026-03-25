@@ -11,7 +11,7 @@ function post(host: string, path: string, body: any) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }).catch(() => {}); // python server might not be running yet
+  }).catch((e) => console.error("[nudge]", e.message));
 }
 
 export default definePluginEntry({
@@ -61,7 +61,7 @@ export default definePluginEntry({
         if (sub === "status") {
           try {
             const r = await fetch(`${host}/feedback/status`);
-            return await r.text();
+            return r.ok ? await r.text() : `error: ${r.status}`;
           } catch { return "nudge server not running"; }
         }
         return "/rl good | /rl bad | /rl status";
