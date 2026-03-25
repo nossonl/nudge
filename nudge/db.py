@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS feedback (
     prompt TEXT NOT NULL,
     response TEXT NOT NULL,
     context TEXT,
-    rating INTEGER NOT NULL,       -- +1 good, -1 bad. no middle ground
+    rating INTEGER NOT NULL,       -- +1 good, -1 bad.
     source TEXT DEFAULT 'cli',     -- cli | hook | discord | telegram | whatsapp
     trained INTEGER DEFAULT 0,
     adapter_version INTEGER,
