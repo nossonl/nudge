@@ -65,9 +65,8 @@ def load_model(model_name, lora_rank=16, adapter_path=None):
     model = _apply_lora(model, rank=lora_rank)
     if adapter_path and Path(adapter_path).exists():
         weights = mx.load(adapter_path)
-        lora_w = {k: v for k, v in weights.items() if "lora" in k.lower()}
-        if lora_w:
-            model.load_weights(list(lora_w.items()))
+        # load whatever weights match — skip missing ones
+        model.load_weights(list(weights.items()), strict=False)
     model.eval()
     return model, tokenizer
 
@@ -236,7 +235,8 @@ def train(config, conn):
     save_dir.mkdir(parents=True, exist_ok=True)
     adapter_file = str(save_dir / "adapter.safetensors")
 
-    lora_w = {k: v for k, v in nn.utils.tree_flatten(policy.trainable_parameters())}
+    # only save LoRA weights, not the full model
+    lora_w = {k: v for k, v in nn.utils.tree_flatten(policy.trainable_parameters()) if "lora" in k.lower()}
     mx.save_safetensors(adapter_file, lora_w)
 
     # also save adapter_config.json — vLLM needs this
