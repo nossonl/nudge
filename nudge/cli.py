@@ -183,7 +183,7 @@ def cmd_init(_args):
         f"Config: [dim]{CONFIG_PATH}[/dim]\n\n"
         f"1. Use your AI agent normally\n"
         f"2. Rate responses (panel or /rl good / /rl bad)\n"
-        f"3. Training runs daily at {cfg.get('train_schedule', '03:00')} (or [bold]nudge train[/bold] anytime)\n"
+        f"3. Once you hit {cfg['batch_min']} ratings, training runs at {cfg.get('train_schedule', '03:00')} (or [bold]nudge train[/bold] anytime)\n"
         f"4. [bold]nudge status[/bold] to check progress | [bold]nudge history[/bold] to fix ratings",
         title="Setup complete", border_style="green"))
 
