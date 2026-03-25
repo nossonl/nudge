@@ -33,9 +33,17 @@ def _maybe_train():
     conn.close()
 
 
+MAX_BODY = 1_048_576  # 1MB cap — don't let anyone blow up our memory
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        length = self.headers.get("Content-Length")
+        if not length or not length.isdigit() or int(length) > MAX_BODY:
+            self.send_response(400)
+            self.end_headers()
+            return
+        body = json.loads(self.rfile.read(int(length)))
         path = self.path
 
         if path == "/feedback/capture":

@@ -1,7 +1,6 @@
 """MIS-PO trainer. EMA baseline. LoRA only. Adapter versioning. Hot-swap."""
-# the whole point: advantage = reward - ema_baseline
-# when all ratings are negative, GRPO normalizes to zero and learns nothing.
-# EMA baseline keeps the signal alive. that's the difference.
+# score = reward - running_average
+# running average tracks all past scores so the model always has signal to learn from
 
 import json
 import shutil
@@ -127,7 +126,7 @@ def _make_loss_fn(tokenized, ref_logprobs, cfg, ema_mean):
         traj = mx.exp(mx.mean(new_r - ref_r))
         gate = mx.logical_and(traj >= tj_lo, traj <= tj_hi).astype(mx.float32)
 
-        # advantage with EMA baseline — the core idea
+        # how much better/worse than average was this response
         adv = rating - ema_mean
         if rating > 0:
             adv *= pw  # boost rare positive signal
@@ -241,26 +240,50 @@ def train(config, conn):
     db.add_adapter(conn, new_v, adapter_file, parent_v, metrics)
     db.mark_trained(conn, fresh_ids, new_v)
 
-    # cleanup old adapters
-    for p in db.cleanup_adapters(conn, keep=cfg["adapter_keep"]):
-        d = Path(p).parent
-        if d.exists():
-            shutil.rmtree(d, ignore_errors=True)
+    # only cleanup if user set a limit — default keeps everything for rollback
+    if cfg.get("adapter_keep"):
+        for p in db.cleanup_adapters(conn, keep=cfg["adapter_keep"]):
+            d = Path(p).parent
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
 
     del policy
     return metrics
 
 
+def _convert_to_gguf(adapter_dir):
+    """Auto-convert safetensors to GGUF for Ollama. Returns GGUF path or None."""
+    import subprocess
+    safetensors_file = Path(adapter_dir) / "adapter.safetensors"
+    gguf_file = Path(adapter_dir) / "adapter.gguf"
+    if gguf_file.exists():
+        return str(gguf_file)
+    if not safetensors_file.exists():
+        return None
+    # try llama.cpp convert tool — installed via pip install llama-cpp-python or brew
+    for cmd in ["convert-lora-to-gguf", "python3 -m llama_cpp.convert_lora"]:
+        try:
+            result = subprocess.run(
+                cmd.split() + [str(safetensors_file), "--outfile", str(gguf_file)],
+                capture_output=True, timeout=120,
+            )
+            if result.returncode == 0 and gguf_file.exists():
+                return str(gguf_file)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    return None
+
+
 def hot_swap(server_type, adapter_path, model_name):
-    """Push new adapter into running server. Returns success bool."""
+    """Push new adapter into running server. Handles conversion automatically."""
     import requests
-    adapter_dir = str(Path(adapter_path).parent)  # vLLM wants the directory
+    adapter_dir = str(Path(adapter_path).parent)
 
     if server_type == "ollama":
-        # ollama needs GGUF. safetensors won't work directly.
-        # for now: create a modelfile pointing at the adapter dir.
-        # user may need to convert with llama.cpp if ollama rejects it.
-        mf = f"FROM {model_name}\nADAPTER {adapter_dir}\n"
+        # ollama needs GGUF — auto-convert from safetensors
+        gguf = _convert_to_gguf(adapter_dir)
+        adapter_ref = gguf if gguf else adapter_dir
+        mf = f"FROM {model_name}\nADAPTER {adapter_ref}\n"
         try:
             r = requests.post("http://localhost:11434/api/create",
                               json={"name": f"{model_name}-nudge", "modelfile": mf}, timeout=60)
