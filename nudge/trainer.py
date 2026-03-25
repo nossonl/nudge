@@ -18,7 +18,10 @@ def _ensure_mlx():
         return
     import mlx.core, mlx.nn, mlx.optimizers
     from mlx_lm import load
-    from mlx_lm.tuning.lora import LoRALinear as _L
+    try:
+        from mlx_lm.tuner.lora import LoRALinear as _L  # mlx-lm >= 0.31
+    except ImportError:
+        from mlx_lm.tuning.lora import LoRALinear as _L  # older versions
     mx, nn, optim = mlx.core, mlx.nn, mlx.optimizers
     mlx_load, LoRALinear = load, _L
 
