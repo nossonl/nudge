@@ -6,9 +6,9 @@ Self-improving reinforcement learning for your AI agents. Set it up once, it run
 
 ## The problem
  
-AI models aren't built for you. They're built for everyone. So you end up doing the same thing over and over: arguing with the model, editing its output, tweaking your prompts, and it still doesn't listen.
+These AI models aren't built for you. They're generalized for everybody, and everybody has different preferences. They're not optimized for how *you* work. So you spend all this time tweaking prompts/skills, editing outputs, arguing with the model, rewriting instructions, and it still doesn't listen. What if your code could actually look like you hand typed it?
  
-With Nudge, over time, the model adjusts to you.
+With Nudge, the model learns how you think and is rewarded or held accountable. With reinforcement learning, over time it actually starts thinking the way you do and behaving the way you want it to.
  
 ## How it works
  
