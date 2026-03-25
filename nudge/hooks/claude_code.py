@@ -82,7 +82,8 @@ def handle_prompt():
         else:
             last_msg = data.get("last_assistant_message", "(from chat)")
             db.add_feedback(conn, config["model"], "(from chat)", last_msg, rating, source=SOURCE)
-        sys.stderr.write(f"Rated: {'\033[32mgood\033[0m' if rating == 1 else '\033[31mbad\033[0m'}\n")
+        label = "\033[32mgood\033[0m" if rating == 1 else "\033[31mbad\033[0m"
+        sys.stderr.write(f"Rated: {label}\n")
         maybe_train(conn, config)
     elif cmd == "undo":
         r = db.remove_last(conn)
