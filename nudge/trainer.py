@@ -32,14 +32,22 @@ def _adapter_dir():
     return d
 
 
+def _make_lora(linear, rank):
+    # handle both old (from_linear) and new (from_base) mlx-lm API
+    if hasattr(LoRALinear, "from_linear"):
+        return LoRALinear.from_linear(linear, r=rank)
+    elif hasattr(LoRALinear, "from_base"):
+        return LoRALinear.from_base(linear, r=rank)
+    else:
+        return LoRALinear(linear.weight.shape[1], linear.weight.shape[0], r=rank)
+
+
 def _apply_lora(model, rank=16):
     # swap all Linear layers to LoRA, including inside lists
-    # bug fix: vanilla recursion skipped list children (e.g. model.layers),
-    # meaning LoRA was applied to almost nothing. now we handle lists too.
     def _replace(module):
         for name, child in module.children().items():
             if isinstance(child, nn.Linear):
-                setattr(module, name, LoRALinear.from_linear(child, r=rank))
+                setattr(module, name, _make_lora(child, rank))
             elif isinstance(child, list):
                 for item in child:
                     if isinstance(item, nn.Module):
