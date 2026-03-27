@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS adapters (
     version INTEGER PRIMARY KEY,
     path TEXT NOT NULL,
     parent_version INTEGER,
-    status TEXT DEFAULT 'active',  -- active | rolled_back
+    status TEXT DEFAULT 'active',
     metrics TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
@@ -33,7 +33,17 @@ CREATE TABLE IF NOT EXISTS ema_state (
     reward_mean REAL DEFAULT 0.0,
     count INTEGER DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS training_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    state TEXT
+);
+CREATE TABLE IF NOT EXISTS background_history (
+    hour INTEGER PRIMARY KEY,
+    pressure_count INTEGER DEFAULT 0,
+    success_count INTEGER DEFAULT 0
+);
 INSERT OR IGNORE INTO ema_state (id, reward_mean, count) VALUES (1, 0.0, 0);
+INSERT OR IGNORE INTO training_state (id, state) VALUES (1, NULL);
 """
 
 
@@ -70,6 +80,15 @@ def _query(conn, where, order, limit=0):
     if limit > 0:
         sql += f" LIMIT {limit}"
     return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def get_feedback_by_ids(conn, ids):
+    if not ids:
+        return []
+    ph = ",".join("?" for _ in ids)
+    rows = conn.execute(f"SELECT * FROM feedback WHERE id IN ({ph})", ids).fetchall()
+    by_id = {row["id"]: dict(row) for row in rows}
+    return [by_id[i] for i in ids if i in by_id]
 
 
 def get_untrained(conn, limit=0):
@@ -152,9 +171,46 @@ def get_ema(conn):
     return r["reward_mean"], r["count"]
 
 
+def get_training_state(conn):
+    row = conn.execute("SELECT state FROM training_state WHERE id=1").fetchone()
+    if not row or not row["state"]:
+        return None
+    return json.loads(row["state"])
+
+
+def save_training_state(conn, state):
+    conn.execute("UPDATE training_state SET state=? WHERE id=1", (json.dumps(state),))
+    conn.commit()
+
+
+def clear_training_state(conn):
+    conn.execute("UPDATE training_state SET state=NULL WHERE id=1")
+    conn.commit()
+
+
+def record_background_event(conn, kind, hour):
+    conn.execute("INSERT OR IGNORE INTO background_history (hour, pressure_count, success_count) VALUES (?,0,0)", (hour,))
+    field = "pressure_count" if kind == "pressure" else "success_count"
+    conn.execute(f"UPDATE background_history SET {field}={field}+1 WHERE hour=?", (hour,))
+    conn.commit()
+
+
+def background_history(conn):
+    rows = conn.execute("SELECT hour, pressure_count, success_count FROM background_history").fetchall()
+    return {row["hour"]: dict(row) for row in rows}
+
+
 def update_ema(conn, mean, n):
     conn.execute("UPDATE ema_state SET reward_mean=?, count=? WHERE id=1", (mean, n))
     conn.commit()
+
+
+def record_training_round(conn, mean, count, version, path, parent=None, metrics=None, feedback_ids=None):
+    with conn:
+        conn.execute(
+            "INSERT INTO adapters (version, path, parent_version, status, metrics) VALUES (?,?,?,?,?)",
+            (version, path, parent, "candidate", json.dumps(metrics) if metrics else None),
+        )
 
 
 # -- adapter ops --
@@ -167,7 +223,6 @@ def list_adapters(conn):
 
 
 def add_adapter(conn, version, path, parent=None, metrics=None):
-    # deactivate all previous adapters — only one active at a time
     conn.execute("UPDATE adapters SET status='inactive' WHERE status='active'")
     conn.execute(
         "INSERT INTO adapters (version, path, parent_version, metrics) VALUES (?,?,?,?)",
@@ -183,8 +238,44 @@ def latest_adapter(conn):
     return dict(r) if r else None
 
 
+def latest_candidate(conn):
+    r = conn.execute(
+        "SELECT * FROM adapters WHERE status='candidate' ORDER BY version DESC LIMIT 1"
+    ).fetchone()
+    return dict(r) if r else None
+
+
+def activate_adapter(conn, version):
+    with conn:
+        conn.execute("UPDATE adapters SET status='inactive' WHERE status='active'")
+        conn.execute("UPDATE adapters SET status='active' WHERE version=?", (version,))
+    return latest_adapter(conn)
+
+
+def activate_training_round(conn, version, mean, count, feedback_ids=None):
+    feedback_ids = feedback_ids or []
+    with conn:
+        conn.execute("UPDATE ema_state SET reward_mean=?, count=? WHERE id=1", (mean, count))
+        conn.execute("UPDATE adapters SET status='inactive' WHERE status='active'")
+        conn.execute("UPDATE adapters SET status='active' WHERE version=?", (version,))
+        if feedback_ids:
+            ph = ",".join("?" for _ in feedback_ids)
+            conn.execute(
+                f"UPDATE feedback SET trained=1, adapter_version=? WHERE id IN ({ph})",
+                [version] + feedback_ids,
+            )
+
+
+def reject_adapter(conn, version):
+    conn.execute("UPDATE adapters SET status='rejected' WHERE version=?", (version,))
+    conn.commit()
+
+
 def rollback_to(conn, version):
-    # go back to this version, mark everything newer as rolled back
+    row = conn.execute("SELECT version FROM adapters WHERE version=?", (version,)).fetchone()
+    if not row:
+        return None
+    conn.execute("UPDATE adapters SET status='inactive' WHERE status='active'")
     conn.execute("UPDATE adapters SET status='rolled_back' WHERE version > ?", (version,))
     conn.execute("UPDATE adapters SET status='active' WHERE version = ?", (version,))
     conn.commit()
@@ -192,11 +283,16 @@ def rollback_to(conn, version):
 
 
 def rollback(conn):
-    """Kill newest active adapter, return the one before it."""
     latest = latest_adapter(conn)
     if not latest:
         return None
+    previous = conn.execute(
+        "SELECT version FROM adapters WHERE status='inactive' ORDER BY version DESC LIMIT 1"
+    ).fetchone()
+    if not previous:
+        return None
     conn.execute("UPDATE adapters SET status='rolled_back' WHERE version=?", (latest["version"],))
+    conn.execute("UPDATE adapters SET status='active' WHERE version = ?", (previous["version"],))
     conn.commit()
     return latest_adapter(conn)
 
@@ -217,6 +313,8 @@ def cleanup_adapters(conn, keep=20):
 def reset_all(conn):
     conn.executescript(
         "DELETE FROM feedback; DELETE FROM adapters; "
+        "DELETE FROM background_history; "
         "UPDATE ema_state SET reward_mean=0.0, count=0 WHERE id=1;"
+        "UPDATE training_state SET state=NULL WHERE id=1;"
     )
     conn.commit()
