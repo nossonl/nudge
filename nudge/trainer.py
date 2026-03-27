@@ -881,7 +881,7 @@ def _make_loss_fn_mlx(model, tokenized, ref_logprobs, cfg, ema_mean):
         ).squeeze(-1)
         new_r, ref_r = new_lp[start - 1:], ref[start - 1:]
         adv = mx.array(_scalar_advantage(rating, ema_mean, cfg), dtype=new_r.dtype)
-        if loss_name == "reinforce++":
+        if loss_name in ("reinforceclaw", "reinforce++"):
             per_token_kl = new_r - ref_r
             adjusted = mx.stop_gradient(adv - kl_c * per_token_kl)
             return -mx.mean(new_r * adjusted)
@@ -1125,7 +1125,7 @@ def _make_loss_fn_torch(model, tokenized, ref_logprobs, cfg, ema_mean, torch):
         new_lp = torch.log_softmax(logits, dim=-1)[:-1].gather(-1, ids[1:].unsqueeze(-1)).squeeze(-1)
         new_r, ref_r = new_lp[start - 1:], ref[start - 1:]
         adv = torch.tensor(_scalar_advantage(rating, ema_mean, cfg), device=ids.device, dtype=new_r.dtype)
-        if loss_name == "reinforce++":
+        if loss_name in ("reinforceclaw", "reinforce++"):
             per_token_kl = new_r - ref_r
             adjusted = (adv - kl_c * per_token_kl).detach()
             return -(new_r * adjusted).mean()

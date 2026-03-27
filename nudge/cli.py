@@ -33,7 +33,7 @@ PRESETS = {
 }
 
 DEFAULTS = {
-    "loss_fn": "mis-po",
+    "loss_fn": "mis-po",  # or "reinforceclaw"
     "lora_target": "attention",
     "token_clip": [0.5, 2.0], "kl_coeff": 0.08, "lora_rank": 16,
     "grad_accum": 1, "grad_clip": 1.0, "batch_min": 24, "batch_size": 4,
