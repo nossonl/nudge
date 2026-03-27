@@ -4,11 +4,10 @@
 # run: python -m nudge.hooks.openclaw
 
 import json
-import subprocess
-import sys
 from collections import OrderedDict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from nudge import db
+from nudge.hooks._common import queue_training
 
 _config = None
 _latest_by_session = OrderedDict()  # capped at 1000 entries
@@ -25,16 +24,11 @@ def _cfg():
 
 
 def _maybe_train(conn):
-    """only auto-train if schedule is auto — otherwise launchd/systemd handles it"""
     cfg = _cfg()
     if cfg.get("train_schedule", "03:00") != "auto":
         return
-    if db.count_trainable_untrained(conn) >= cfg.get("batch_min", 16):
-        subprocess.Popen(
-            [sys.executable, "-m", "nudge.cli", "train"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+    if db.count_trainable_untrained(conn) >= cfg.get("batch_min", 24):
+        queue_training()
 
 
 def _status_response(self):

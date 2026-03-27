@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
-"""Codex desktop app hook. Two circles under each response + X to close."""
+"""Codex desktop app hook. Buttons after each response + prompt-command backups."""
 # click left → green (good). click right → red (bad).
 # click filled one again → unfills (undo). X closes the circles.
-# circles reappear after every response.
+# circles reappear after every response. prompt hook also supports /good and /bad.
 
 import json
+import subprocess
 import sys
-import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from nudge import db
-from nudge.hooks._common import load_config, maybe_train
+from nudge.hooks._common import load_config, maybe_train, read_stdin
 
 SOURCE = "codex"
+COMMANDS = {
+    "/rl good": "good", "/rl bad": "bad", "/rl undo": "undo",
+    "/rl train": "train", "/rl status": "status",
+    "/rl rollback": "rollback", "/rl reset": "reset",
+    "/rl on": "on", "/rl off": "off",
+    "/good": "good", "/bad": "bad",
+}
 
 
 def _show_buttons(feedback_id, config):
@@ -75,12 +82,9 @@ def _show_buttons(feedback_id, config):
 
 
 def handle_stop():
-    try:
-        data = json.loads(sys.stdin.read()) if not sys.stdin.isatty() else {}
-    except (json.JSONDecodeError, EOFError):
-        data = {}
+    data = read_stdin()
     config = load_config()
-    if not config.get("model") or not config.get("panel_enabled", True):
+    if not config.get("model"):
         return
 
     last_msg = data.get("last_assistant_message", "")
@@ -90,12 +94,79 @@ def handle_stop():
     conn = db.connect()
     fid = db.add_feedback(conn, config["model"], "(codex)", last_msg, 0, source=SOURCE)
     conn.close()
+    if not config.get("panel_enabled", True):
+        return
 
-    # not daemon — thread must stay alive for tkinter
-    t = threading.Thread(target=_show_buttons, args=(fid, config))
-    t.start()
+    subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "panel", str(fid)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def handle_prompt():
+    data = read_stdin()
+    prompt_obj = data.get("prompt", {})
+    prompt = prompt_obj.get("content", "").strip() if isinstance(prompt_obj, dict) else str(prompt_obj).strip()
+    cmd = COMMANDS.get(" ".join(prompt.lower().split()))
+    if cmd is None:
+        sys.exit(0)
+
+    config = load_config()
+    conn = db.connect()
+    if cmd in ("good", "bad"):
+        if not config.get("model"):
+            conn.close()
+            print(json.dumps({"result": "block", "reason": "nudge not initialized"}))
+            return
+        rating = 1 if cmd == "good" else -1
+        pending = db.latest_pending(conn, source=SOURCE)
+        if pending:
+            db.update_feedback_rating(conn, pending["id"], rating)
+        else:
+            last_msg = data.get("last_assistant_message", "(from codex)")
+            db.add_feedback(conn, config["model"], "(from codex)", last_msg, rating, source=SOURCE)
+        maybe_train(conn, config)
+    elif cmd == "undo":
+        db.remove_last(conn)
+    elif cmd == "train":
+        from nudge.hooks._common import queue_training
+        queue_training()
+    elif cmd == "status":
+        pass
+    elif cmd == "rollback":
+        prev = db.rollback(conn)
+        if prev:
+            from nudge import trainer
+            trainer.hot_swap(config.get("server", "ollama"), prev["path"], config.get("model", ""))
+    elif cmd == "reset":
+        from nudge.cli import reset_state
+        conn.close()
+        reset_state()
+        print(json.dumps({"result": "block", "reason": f"nudge: /rl {cmd}"}))
+        return
+    elif cmd == "on":
+        config["panel_enabled"] = True
+        from nudge.cli import save_config
+        save_config(config)
+    elif cmd == "off":
+        config["panel_enabled"] = False
+        from nudge.cli import save_config
+        save_config(config)
+
+    conn.close()
+    print(json.dumps({"result": "block", "reason": f"nudge: /rl {cmd}"}))
+
+
+def handle_panel():
+    if len(sys.argv) < 3:
+        return
+    _show_buttons(int(sys.argv[2]), load_config())
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "stop":
-        handle_stop()
+    {"stop": handle_stop, "prompt": handle_prompt, "panel": handle_panel}.get(
+        sys.argv[1] if len(sys.argv) > 1 else "", lambda: None
+    )()

@@ -13,6 +13,13 @@ from nudge import db
 from nudge.hooks._common import load_config, read_stdin, maybe_train
 
 SOURCE = "claude_code"
+COMMANDS = {
+    "/rl good": "good", "/rl bad": "bad", "/rl undo": "undo",
+    "/rl train": "train", "/rl status": "status",
+    "/rl rollback": "rollback", "/rl reset": "reset",
+    "/rl on": "on", "/rl off": "off",
+    "/good": "good", "/bad": "bad",
+}
 
 
 def _last_msg_from(data, role):
@@ -54,15 +61,8 @@ def handle_prompt():
     prompt_obj = data.get("prompt", {})
     prompt = prompt_obj.get("content", "").strip() if isinstance(prompt_obj, dict) else str(prompt_obj).strip()
 
-    cmds = {
-        "/rl good": "good", "/rl bad": "bad", "/rl undo": "undo",
-        "/rl train": "train", "/rl status": "status",
-        "/rl rollback": "rollback", "/rl reset": "reset",
-        "/rl on": "on", "/rl off": "off",
-        "/good": "good", "/bad": "bad",
-    }
-
-    cmd = next((a for p, a in cmds.items() if prompt.lower().startswith(p)), None)
+    normalized = " ".join(prompt.lower().split())
+    cmd = COMMANDS.get(normalized)
     if cmd is None:
         sys.exit(0)
 
