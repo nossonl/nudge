@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-DB_PATH = Path.home() / ".nudge" / "nudge.db"
+DB_PATH = Path.home() / ".reinforceclaw" / "reinforceclaw.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS feedback (
@@ -75,13 +75,6 @@ def add_feedback(conn, model, prompt, response, rating, context=None, source="cl
     return cur.lastrowid
 
 
-def _query(conn, where, order, limit=0):
-    sql = f"SELECT * FROM feedback WHERE {where} ORDER BY {order}"
-    if limit > 0:
-        sql += f" LIMIT {limit}"
-    return [dict(r) for r in conn.execute(sql).fetchall()]
-
-
 def get_feedback_by_ids(conn, ids):
     if not ids:
         return []
@@ -92,12 +85,21 @@ def get_feedback_by_ids(conn, ids):
 
 
 def get_untrained(conn, limit=0):
-    # skip unrated (0) entries from openclaw etc.
-    return _query(conn, "trained=0 AND rating!=0", "created_at ASC", limit)
+    sql = "SELECT * FROM feedback WHERE trained=0 AND rating!=0 ORDER BY created_at ASC"
+    params = ()
+    if limit > 0:
+        sql += " LIMIT ?"
+        params = (limit,)
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
 def get_replay(conn, limit=0):
-    return _query(conn, "trained=1", "RANDOM()", limit)
+    sql = "SELECT * FROM feedback WHERE trained=1 ORDER BY RANDOM()"
+    params = ()
+    if limit > 0:
+        sql += " LIMIT ?"
+        params = (limit,)
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
 def mark_trained(conn, ids, adapter_version):
@@ -206,10 +208,15 @@ def update_ema(conn, mean, n):
 
 
 def record_training_round(conn, mean, count, version, path, parent=None, metrics=None, feedback_ids=None):
+    payload = dict(metrics or {})
+    payload.setdefault("ema_mean", mean)
+    payload.setdefault("ema_count", count)
+    if feedback_ids is not None:
+        payload.setdefault("feedback_ids", list(feedback_ids))
     with conn:
         conn.execute(
             "INSERT INTO adapters (version, path, parent_version, status, metrics) VALUES (?,?,?,?,?)",
-            (version, path, parent, "candidate", json.dumps(metrics) if metrics else None),
+            (version, path, parent, "candidate", json.dumps(payload) if payload else None),
         )
 
 
@@ -252,10 +259,17 @@ def activate_adapter(conn, version):
     return latest_adapter(conn)
 
 
-def activate_training_round(conn, version, mean, count, feedback_ids=None):
-    feedback_ids = feedback_ids or []
+def activate_training_round(conn, version, mean=None, count=None, feedback_ids=None):
+    row = conn.execute("SELECT metrics FROM adapters WHERE version=?", (version,)).fetchone()
+    metrics = json.loads(row["metrics"]) if row and row["metrics"] else {}
+    if mean is None:
+        mean = metrics.get("ema_mean")
+    if count is None:
+        count = metrics.get("ema_count")
+    feedback_ids = list(feedback_ids or metrics.get("feedback_ids") or [])
     with conn:
-        conn.execute("UPDATE ema_state SET reward_mean=?, count=? WHERE id=1", (mean, count))
+        if mean is not None and count is not None:
+            conn.execute("UPDATE ema_state SET reward_mean=?, count=? WHERE id=1", (mean, count))
         conn.execute("UPDATE adapters SET status='inactive' WHERE status='active'")
         conn.execute("UPDATE adapters SET status='active' WHERE version=?", (version,))
         if feedback_ids:

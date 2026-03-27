@@ -25,8 +25,8 @@ GB = 1024 ** 3
 MIN_TRAINING_BUDGET = 2 * GB
 MAC_OS_RESERVE = 8 * GB
 LINUX_OS_RESERVE = 4 * GB
-TRAIN_LOG_PATH = Path.home() / ".nudge" / "train.log"
-TRAIN_LOCK_PATH = Path.home() / ".nudge" / "train.lock"
+TRAIN_LOG_PATH = Path.home() / ".reinforceclaw" / "train.log"
+TRAIN_LOCK_PATH = Path.home() / ".reinforceclaw" / "train.lock"
 BACKGROUND_IDLE_LOAD = 0.85
 BACKGROUND_WINDOW_MINUTES = 180
 
@@ -445,7 +445,7 @@ def _fresh_process_train_retry(config, conn) -> dict | None:
         (
             "import json, sys; "
             "from pathlib import Path; "
-            "from nudge import db, trainer; "
+            "from reinforceclaw import db, trainer; "
             "cfg = json.loads(sys.argv[1]); "
             "conn = db.connect(Path(sys.argv[2])); "
             "print(json.dumps(trainer.train_result(cfg, conn)))"
@@ -733,8 +733,8 @@ def _enable_grad_checkpoint_mlx(model):
         if not layers:
             return lambda: None
         layer_cls = type(layers[0])
-        original_call = getattr(layer_cls, "__nudge_original_call__", layer_cls.__call__)
-        if getattr(layer_cls, "_nudge_checkpointed", False):
+        original_call = getattr(layer_cls, "__reinforceclaw_original_call__", layer_cls.__call__)
+        if getattr(layer_cls, "_reinforceclaw_checkpointed", False):
             return lambda: None
 
         def checkpointed_call(self, *args, **kwargs):
@@ -744,13 +744,13 @@ def _enable_grad_checkpoint_mlx(model):
 
             return mx.checkpoint(inner)(self.trainable_parameters(), *args, **kwargs)
 
-        layer_cls.__nudge_original_call__ = original_call
+        layer_cls.__reinforceclaw_original_call__ = original_call
         layer_cls.__call__ = checkpointed_call
-        layer_cls._nudge_checkpointed = True
+        layer_cls._reinforceclaw_checkpointed = True
         def restore():
-            if getattr(layer_cls, "_nudge_checkpointed", False):
-                layer_cls.__call__ = layer_cls.__nudge_original_call__
-                layer_cls._nudge_checkpointed = False
+            if getattr(layer_cls, "_reinforceclaw_checkpointed", False):
+                layer_cls.__call__ = layer_cls.__reinforceclaw_original_call__
+                layer_cls._reinforceclaw_checkpointed = False
         return restore
     except Exception:
         return lambda: None
@@ -1652,7 +1652,7 @@ def train(config, conn):
 
 
 def _adapter_dir(config=None):
-    root = Path((config or {}).get("adapter_root", Path.home() / ".nudge" / "adapters"))
+    root = Path((config or {}).get("adapter_root", Path.home() / ".reinforceclaw" / "adapters"))
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -1724,7 +1724,7 @@ def hot_swap(server_type, adapter_path, model_name):
         try:
             response = requests.post(
                 "http://localhost:11434/api/create",
-                json={"name": f"{model_name}-nudge", "modelfile": modelfile},
+                json={"name": f"{model_name}-reinforceclaw", "modelfile": modelfile},
                 timeout=60,
             )
             return response.status_code == 200
@@ -1745,7 +1745,7 @@ def hot_swap(server_type, adapter_path, model_name):
         try:
             response = requests.post(
                 "http://localhost:8000/v1/load_lora_adapter",
-                json={"lora_name": "nudge", "lora_path": adapter_dir},
+                json={"lora_name": "reinforceclaw", "lora_path": adapter_dir},
                 timeout=30,
             )
             return response.status_code == 200

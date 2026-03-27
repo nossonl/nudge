@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nudge"
+name = "reinforceclaw"
 version = "0.1.0"
 description = "Personal RL feedback system — rate AI responses, train local LoRA adapters"
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ integrations = [
 ]
 
 [project.scripts]
-nudge = "nudge.cli:main"
+reinforceclaw = "reinforceclaw.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

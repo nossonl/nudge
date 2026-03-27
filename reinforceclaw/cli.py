@@ -1,8 +1,9 @@
 """CLI. argparse. No Click, no Typer. Setup wizard + all commands."""
-# two entry points: `nudge <cmd>` from terminal, `/rl <cmd>` from inside agents.
-# both hit the same functions. wizard is `nudge init`.
+# two entry points: `reinforceclaw <cmd>` from terminal, `/rl <cmd>` from inside agents.
+# both hit the same functions. wizard is `reinforceclaw init`.
 
 import argparse
+import secrets
 import json
 import os
 import shlex
@@ -20,8 +21,8 @@ from . import db, trainer
 from . import collect
 
 console = Console()
-CONFIG_PATH = Path.home() / ".nudge" / "config.json"
-ADAPTER_ROOT = Path.home() / ".nudge" / "adapters"
+CONFIG_PATH = Path.home() / ".reinforceclaw" / "config.json"
+ADAPTER_ROOT = Path.home() / ".reinforceclaw" / "adapters"
 
 PRESETS = {
     "careful":    {"lr": 6e-6, "traj_clip": [0.996, 1.001], "steps": 3,
@@ -80,7 +81,7 @@ def _load_model_cfg():
     cfg = load_config()
     if cfg.get("model"):
         return cfg
-    console.print("[red]Run 'nudge init' first.[/red]")
+    console.print("[red]Run 'reinforceclaw init' first.[/red]")
     return None
 
 
@@ -92,7 +93,7 @@ def _server_base_url(server, cfg, prefix="server"):
     key = f"{prefix}_base_url"
     if cfg.get(key):
         return cfg[key]
-    env_key = f"NUDGE_{prefix.upper()}_BASE_URL"
+    env_key = f"REINFORCECLAW_{prefix.upper()}_BASE_URL"
     if os.environ.get(env_key):
         return os.environ[env_key]
     if prefix == "server" and cfg.get("base_url"):
@@ -110,11 +111,11 @@ def _server_base_url(server, cfg, prefix="server"):
 def _api_key(value, prefix):
     if value:
         return value
-    return os.environ.get(f"NUDGE_{prefix.upper()}_API_KEY")
+    return os.environ.get(f"REINFORCECLAW_{prefix.upper()}_API_KEY")
 
 
 def _ollama_target_model(model_name, latest):
-    return f"{model_name}-nudge" if latest else model_name
+    return f"{model_name}-reinforceclaw" if latest else model_name
 
 
 def _swap_latest(cfg, conn):
@@ -165,7 +166,7 @@ def reset_state():
 def cmd_init(_args):
     console.print(LOGO)
     console.print(Panel("Hands-off reinforcement learning. Rate responses, your model learns the rest.",
-                        title="Welcome to Nudge", border_style="green"))
+                        title="Welcome to ReinforceClaw", border_style="green"))
 
     # agents
     agents = []
@@ -222,12 +223,14 @@ def cmd_init(_args):
            "agents": agents, "panel_enabled": True,
            "lr": preset["lr"], "traj_clip": preset["traj_clip"],
            "steps": preset["steps"], **DEFAULTS}
+    if "openclaw" in agents:
+        cfg["openclaw_secret"] = secrets.token_urlsafe(24)
     save_config(cfg)
     db.connect().close()  # init tables
     _install_hooks(cfg)
 
     # set up training schedule
-    from nudge import scheduler
+    from reinforceclaw import scheduler
     schedule = cfg.get("train_schedule", "03:00")
     if schedule not in ("manual", "auto"):
         if scheduler.install(schedule, cfg.get("schedule_window_minutes", 180)):
@@ -250,8 +253,8 @@ def cmd_init(_args):
         f"Config: [dim]{CONFIG_PATH}[/dim]\n\n"
         f"1. Use your AI agent normally\n"
         f"2. Rate responses ([bold]/rl good[/bold], [bold]/rl bad[/bold], or ignore)\n"
-        f"3. Once you hit {cfg['batch_min']} ratings, training becomes eligible and runs at {cfg.get('train_schedule', '03:00')} by default (or [bold]nudge train[/bold] anytime)\n"
-        f"4. [bold]nudge status[/bold] to check progress | [bold]nudge history[/bold] to fix ratings",
+        f"3. Once you hit {cfg['batch_min']} ratings, training becomes eligible and runs at {cfg.get('train_schedule', '03:00')} by default (or [bold]reinforceclaw train[/bold] anytime)\n"
+        f"4. [bold]reinforceclaw status[/bold] to check progress | [bold]reinforceclaw history[/bold] to fix ratings",
         title="Setup complete", border_style="green"))
 
 
@@ -264,7 +267,7 @@ def _install_hooks(cfg):
     if "codex" in cfg.get("agents", []):
         _install_codex_hooks(hook_dir)
     if "openclaw" in cfg.get("agents", []):
-        _install_openclaw_plugin()
+        _install_openclaw_plugin(cfg)
 
 
 def _install_claude_code_hooks(hook_dir):
@@ -322,12 +325,13 @@ def _install_codex_hooks(hook_dir):
     console.print(f"[green]Codex hooks installed:[/green] {hooks_path}")
 
 
-def _install_openclaw_plugin():
-    """Auto-install the nudge plugin into openclaw. Detects platforms automatically."""
+def _install_openclaw_plugin(cfg):
+    """Auto-install the reinforceclaw plugin into openclaw. Detects platforms automatically."""
     plugin_dir = Path(__file__).parent.parent / "openclaw-plugin"
     if not plugin_dir.exists():
         console.print("[yellow]openclaw-plugin/ not found. Skipping.[/yellow]")
         return
+    secret = cfg.get("openclaw_secret")
     # try to install — if openclaw isn't installed it'll just fail quietly
     import subprocess
     try:
@@ -337,10 +341,16 @@ def _install_openclaw_plugin():
         )
         if result.returncode == 0:
             console.print("[green]OpenClaw plugin installed — all platforms connected[/green]")
+            if secret:
+                console.print(
+                    "[yellow]Set the OpenClaw plugin config field[/yellow] "
+                    "[bold]reinforceclawSecret[/bold] "
+                    f"[yellow]to:[/yellow] [dim]{secret}[/dim]"
+                )
         else:
             console.print(f"[yellow]OpenClaw plugin install failed: {result.stderr.strip()}[/yellow]")
     except FileNotFoundError:
-        console.print("[yellow]openclaw not found. Install it first, then run nudge init again.[/yellow]")
+        console.print("[yellow]openclaw not found. Install it first, then run reinforceclaw init again.[/yellow]")
     except subprocess.TimeoutExpired:
         console.print("[yellow]OpenClaw plugin install timed out.[/yellow]")
 
@@ -445,7 +455,7 @@ def cmd_train(_args):
             "host_memory_busy", "low_free_vram", "outside_schedule_window",
             "missing_cuda_idle_telemetry", "memory_pressure", "insufficient_headroom",
         }:
-            from nudge.hooks._common import queue_training
+            from reinforceclaw.hooks._common import queue_training
             queue_training(delay_seconds=_next_retry_delay(conn))
         console.print(
             "[yellow]Skipped for now.[/yellow]"
@@ -485,7 +495,7 @@ def cmd_status(_args):
     ema_mean, ema_count = db.get_ema(conn)
     latest = db.latest_adapter(conn)
 
-    t = Table(title="Nudge Status", border_style="cyan")
+    t = Table(title="ReinforceClaw Status", border_style="cyan")
     t.add_column("", style="bold")
     t.add_column("")
     t.add_row("Model", cfg.get("model", "not set"))
@@ -542,13 +552,13 @@ def _maybe_train(cfg, conn):
     if cfg.get("train_schedule", "03:00") != "auto":
         return
     if _trainable_untrained(conn) >= cfg.get("batch_min", 8):
-        from nudge.hooks._common import queue_training
+        from reinforceclaw.hooks._common import queue_training
         console.print("[dim]Batch ready, training queued in background...[/dim]")
         queue_training()
 
 
 def cmd_history(_args):
-    """Show recent ratings. Use 'nudge rate <id> good/bad' to change one."""
+    """Show recent ratings. Use 'reinforceclaw rate <id> good/bad' to change one."""
     conn = db.connect()
     rows = db.recent(conn)
     if not rows:
@@ -566,14 +576,14 @@ def cmd_history(_args):
         t.add_row(str(r["id"]), r["prompt"][:50], label.get(str(r["rating"]), "?"),
                   r["source"], r["created_at"])
     console.print(t)
-    console.print("[dim]To change a rating: nudge rate <id> <good|bad>[/dim]")
+    console.print("[dim]To change a rating: reinforceclaw rate <id> <good|bad>[/dim]")
     conn.close()
 
 
 def cmd_rerate(_args):
-    """Change a specific rating: nudge rate 42 good"""
+    """Change a specific rating: reinforceclaw rate 42 good"""
     if not hasattr(_args, 'id') or not hasattr(_args, 'value'):
-        console.print("Usage: nudge rate <id> <good|bad>")
+        console.print("Usage: reinforceclaw rate <id> <good|bad>")
         return
     rating = 1 if _args.value == "good" else -1
     conn = db.connect()
@@ -583,8 +593,8 @@ def cmd_rerate(_args):
 
 
 def cmd_schedule(_args):
-    """Set training schedule: nudge schedule 03:00 / nudge schedule auto / nudge schedule manual"""
-    from nudge import scheduler
+    """Set training schedule: reinforceclaw schedule 03:00 / reinforceclaw schedule auto / reinforceclaw schedule manual"""
+    from reinforceclaw import scheduler
     cfg = load_config()
     if hasattr(_args, 'time') and _args.time:
         val = _args.time
@@ -602,7 +612,7 @@ def cmd_schedule(_args):
             console.print("[red]Could not install scheduler. Leaving existing schedule unchanged.[/red]")
     else:
         console.print(f"Current: {cfg.get('train_schedule', '03:00')}")
-        console.print("[dim]nudge schedule 03:00 / auto / manual[/dim]")
+        console.print("[dim]reinforceclaw schedule 03:00 / auto / manual[/dim]")
 
 
 def cmd_promptgen(_args):
@@ -626,7 +636,7 @@ def cmd_promptgen(_args):
         base_url=base_url,
         api_key=_api_key(getattr(_args, "api_key", None), "prompt"),
     )
-    output = getattr(_args, "output", "") or str(Path.home() / ".nudge" / "prompts.jsonl")
+    output = getattr(_args, "output", "") or str(Path.home() / ".reinforceclaw" / "prompts.jsonl")
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     collect.save_prompts(output, prompts)
     console.print(f"[green]Saved {len(prompts)} prompts:[/green] {output}")
@@ -787,7 +797,7 @@ COMMANDS = {
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="nudge", description="Personal RL for AI agents")
+    parser = argparse.ArgumentParser(prog="reinforceclaw", description="Personal RL for AI agents")
     sub = parser.add_subparsers(dest="command")
     for name in COMMANDS:
         if name in ("rate", "schedule", "train", "promptgen", "collect", "loop"):
@@ -797,12 +807,12 @@ def main():
     train_p = sub.add_parser("train", help="Run training now")
     train_p.add_argument("--background", action="store_true")
 
-    # nudge rate <id> <good|bad>
-    rate_p = sub.add_parser("rate", help="Change a rating: nudge rate 42 good")
+    # reinforceclaw rate <id> <good|bad>
+    rate_p = sub.add_parser("rate", help="Change a rating: reinforceclaw rate 42 good")
     rate_p.add_argument("id")
     rate_p.add_argument("value", choices=["good", "bad"])
 
-    # nudge schedule <time>
+    # reinforceclaw schedule <time>
     sched_p = sub.add_parser("schedule", help="Set training schedule")
     sched_p.add_argument("time", nargs="?")
 

@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from nudge import db
-from nudge.hooks._common import load_config, maybe_train, read_stdin
+from reinforceclaw import db
+from reinforceclaw.hooks._common import load_config, maybe_train, read_stdin
 
 SOURCE = "codex"
 COMMANDS = {
@@ -19,6 +19,14 @@ COMMANDS = {
     "/rl train": "train", "/rl status": "status",
     "/rl rollback": "rollback", "/rl reset": "reset",
     "/rl on": "on", "/rl off": "off",
+    "/rc good": "good", "/rc bad": "bad", "/rc undo": "undo",
+    "/rc train": "train", "/rc status": "status",
+    "/rc rollback": "rollback", "/rc reset": "reset",
+    "/rc on": "on", "/rc off": "off",
+    "/reinforceclaw good": "good", "/reinforceclaw bad": "bad",
+    "/reinforceclaw undo": "undo", "/reinforceclaw train": "train",
+    "/reinforceclaw status": "status", "/reinforceclaw rollback": "rollback",
+    "/reinforceclaw reset": "reset", "/reinforceclaw on": "on", "/reinforceclaw off": "off",
     "/good": "good", "/bad": "bad",
 }
 
@@ -119,7 +127,7 @@ def handle_prompt():
     if cmd in ("good", "bad"):
         if not config.get("model"):
             conn.close()
-            print(json.dumps({"result": "block", "reason": "nudge not initialized"}))
+            print(json.dumps({"result": "block", "reason": "reinforceclaw not initialized"}))
             return
         rating = 1 if cmd == "good" else -1
         pending = db.latest_pending(conn, source=SOURCE)
@@ -132,32 +140,32 @@ def handle_prompt():
     elif cmd == "undo":
         db.remove_last(conn)
     elif cmd == "train":
-        from nudge.hooks._common import queue_training
+        from reinforceclaw.hooks._common import queue_training
         queue_training()
     elif cmd == "status":
         pass
     elif cmd == "rollback":
         prev = db.rollback(conn)
         if prev:
-            from nudge import trainer
+            from reinforceclaw import trainer
             trainer.hot_swap(config.get("server", "ollama"), prev["path"], config.get("model", ""))
     elif cmd == "reset":
-        from nudge.cli import reset_state
+        from reinforceclaw.cli import reset_state
         conn.close()
         reset_state()
-        print(json.dumps({"result": "block", "reason": f"nudge: /rl {cmd}"}))
+        print(json.dumps({"result": "block", "reason": f"reinforceclaw: /rl {cmd}"}))
         return
     elif cmd == "on":
         config["panel_enabled"] = True
-        from nudge.cli import save_config
+        from reinforceclaw.cli import save_config
         save_config(config)
     elif cmd == "off":
         config["panel_enabled"] = False
-        from nudge.cli import save_config
+        from reinforceclaw.cli import save_config
         save_config(config)
 
     conn.close()
-    print(json.dumps({"result": "block", "reason": f"nudge: /rl {cmd}"}))
+    print(json.dumps({"result": "block", "reason": f"reinforceclaw: /rl {cmd}"}))
 
 
 def handle_panel():

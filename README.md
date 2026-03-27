@@ -1,14 +1,14 @@
-# Nudge
+# ReinforceClaw
  
 Self-improving reinforcement learning for your AI agents. Set it up once, it runs autonomously in the background, and your model keeps getting better every time you use it.
 
-![Nudge Diagram](assets/diagram.png)
+![ReinforceClaw Diagram](assets/diagram.png)
 
 ## The problem
  
 These AI models aren't built for you. They're generalized for everybody, and everybody has different preferences. They're not optimized for how *you* work. So you spend all this time tweaking prompts/skills, editing outputs, arguing with the model, rewriting instructions, and it still doesn't listen. What if your code could actually look like you hand typed it?
  
-With Nudge, the model learns how you think and is rewarded or held accountable. With reinforcement learning, over time it actually starts thinking the way you do and behaving the way you want it to.
+With ReinforceClaw, the model learns how you think and is rewarded or held accountable. With reinforcement learning, over time it actually starts thinking the way you do and behaving the way you want it to.
  
 ## How it works
  
@@ -40,12 +40,12 @@ Inside your agent (Claude Code, Codex, OpenClaw), use `/rl`:
 /rl reset        # start fresh
 ```
  
-From the terminal, same thing but with `nudge`:
+From the terminal, same thing but with `reinforceclaw`:
  
 ```bash
-nudge good
-nudge status
-nudge train
+reinforceclaw good
+reinforceclaw status
+reinforceclaw train
 ```
  
 ## Under the hood
@@ -134,14 +134,14 @@ Any HuggingFace model. The setup has a curated list from Qwen, Meta, Mistral, Go
 ## Install
  
 ```bash
-pip install nudge
-nudge init
+pip install reinforceclaw
+reinforceclaw init
 ```
  
 or
  
 ```bash
-curl -sSL https://raw.githubusercontent.com/nossonl/nudge/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/nossonl/reinforceclaw/main/install.sh | bash
 ```
  
 Pick your agent, model, and training preset. After that, just use your agent. The rest is automatic.
@@ -152,4 +152,4 @@ MIT
  
 ---
  
-nudge nudge nudge
+reinforceclaw reinforceclaw reinforceclaw

@@ -1,4 +1,4 @@
-from nudge import collect
+from reinforceclaw import collect
 
 
 def test_normalize_topics_filters_unknown_values():

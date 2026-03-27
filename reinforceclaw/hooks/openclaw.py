@@ -1,24 +1,27 @@
-"""OpenClaw backend. Receives POSTs from the TS plugin, writes to nudge DB."""
+"""OpenClaw backend. Receives POSTs from the TS plugin, writes to reinforceclaw DB."""
 # the TS plugin (openclaw-plugin/) runs inside the gateway and catches messages
 # from all 23+ platforms. it sends them here. we store, rate, and train.
-# run: python -m nudge.hooks.openclaw
+# run: python -m reinforceclaw.hooks.openclaw
 
 import json
+import hmac
+import os
 from collections import OrderedDict
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from nudge import db
-from nudge.hooks._common import queue_training
+from reinforceclaw import db
+from reinforceclaw.hooks._common import queue_training
 
 _config = None
 _latest_by_session = OrderedDict()  # capped at 1000 entries
 MAX_SESSIONS = 1000
 MAX_BODY = 1_048_576  # 1MB
+SECRET_HEADER = "X-ReinforceClaw-Secret"
 
 
 def _cfg():
     # reload every time — user might change settings while server runs
     global _config
-    from nudge.cli import load_config
+    from reinforceclaw.cli import load_config
     _config = load_config()
     return _config
 
@@ -29,6 +32,18 @@ def _maybe_train(conn):
         return
     if db.count_trainable_untrained(conn) >= cfg.get("batch_min", 24):
         queue_training()
+
+
+def _shared_secret():
+    return _cfg().get("openclaw_secret") or os.environ.get("REINFORCECLAW_OPENCLAW_SECRET") or None
+
+
+def _authorized(headers):
+    secret = _shared_secret()
+    if not secret:
+        return False
+    got = headers.get(SECRET_HEADER)
+    return bool(got) and hmac.compare_digest(got, secret)
 
 
 def _status_response(self):
@@ -51,6 +66,8 @@ def _status_response(self):
 
 class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
+        if not _authorized(self.headers):
+            self.send_response(403); self.end_headers(); return
         length = self.headers.get("Content-Length")
         if not length or not length.isdigit() or int(length) > MAX_BODY:
             self.send_response(400); self.end_headers(); return
@@ -96,6 +113,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b'{"ok":true}')
 
     def do_GET(self):
+        if not _authorized(self.headers):
+            self.send_response(403); self.end_headers(); return
         if self.path == "/feedback/status":
             _status_response(self)
         else:
@@ -105,7 +124,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def run(port=8420):
-    print(f"nudge openclaw backend on :{port}")
+    if not _shared_secret():
+        raise RuntimeError("reinforceclaw openclaw backend requires openclaw_secret")
+    print(f"reinforceclaw openclaw backend on :{port}")
     HTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 

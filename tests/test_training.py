@@ -11,8 +11,8 @@ def test_training_pipeline():
     except ImportError:
         print("mlx-lm not installed, skipping"); return
 
-    from nudge import db
-    from nudge.trainer import train, load_model
+    from reinforceclaw import db
+    from reinforceclaw.trainer import train, load_model
 
     model_name = "Qwen/Qwen3.5-9B"
     print(f"Model: {model_name}")
@@ -111,7 +111,7 @@ def test_training_pipeline():
         # load the adapter and verify it produces different logprobs than base
         print("\n5. Verify adapter changes model output...")
         import mlx.core as mx
-        from nudge.trainer import _compute_logprobs
+        from reinforceclaw.trainer import _compute_logprobs
 
         base, tok = mlx_load(model_name)
         base.eval()

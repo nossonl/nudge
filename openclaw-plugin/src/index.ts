@@ -1,4 +1,4 @@
-// nudge openclaw plugin — thin bridge to the python backend
+// reinforceclaw openclaw plugin — thin bridge to the python backend
 // catches every message in/out across all 23+ platforms, sends to localhost:8420
 // all real logic (db, training, adapters) lives in python. this is just the pipe.
 
@@ -7,19 +7,27 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 const pending = new Map<string, { prompt: string; channel: string }>();
 
 function post(host: string, path: string, body: any) {
+  const secret =
+    (globalThis as any).__reinforceclawSecret ??
+    process.env.REINFORCECLAW_OPENCLAW_SECRET;
   fetch(`${host}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(secret ? { "X-ReinforceClaw-Secret": secret } : {}),
+    },
     body: JSON.stringify(body),
-  }).catch((e) => console.error("[nudge]", e.message));
+  }).catch((e) => console.error("[reinforceclaw]", e.message));
 }
 
 export default definePluginEntry({
-  id: "nudge-feedback",
-  name: "Nudge Feedback",
+  id: "reinforceclaw-feedback",
+  name: "ReinforceClaw Feedback",
 
   register(api) {
-    const host = (api.config as any)?.nudgeHost ?? "http://127.0.0.1:8420";
+    const host = (api.config as any)?.reinforceclawHost ?? "http://127.0.0.1:8420";
+    (globalThis as any).__reinforceclawSecret =
+      (api.config as any)?.reinforceclawSecret ?? process.env.REINFORCECLAW_OPENCLAW_SECRET ?? "";
 
     // stash every user message — need it to pair with the bot's response
     api.on("message_received", async (event: any) => {
@@ -45,10 +53,9 @@ export default definePluginEntry({
       pending.delete(key);
     });
 
-    // /rl command — works from any platform
-    api.registerCommand({
-      name: "rl",
-      description: "Rate responses: /rl good, /rl bad, /rl status",
+    const registerRateCommand = (name: string) => api.registerCommand({
+      name,
+      description: "Rate responses: /rl good, /rc good, /reinforceclaw good",
       handler: async (args: string[], ctx: any) => {
         const sub = args[0];
         if (sub === "good" || sub === "bad") {
@@ -62,10 +69,13 @@ export default definePluginEntry({
           try {
             const r = await fetch(`${host}/feedback/status`);
             return r.ok ? await r.text() : `error: ${r.status}`;
-          } catch { return "nudge server not running"; }
+          } catch { return "reinforceclaw server not running"; }
         }
-        return "/rl good | /rl bad | /rl status";
+        return `/${name} good | /${name} bad | /${name} status`;
       },
     });
+    registerRateCommand("rl");
+    registerRateCommand("rc");
+    registerRateCommand("reinforceclaw");
   },
 });

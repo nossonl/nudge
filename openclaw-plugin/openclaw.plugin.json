@@ -1,12 +1,13 @@
 {
-  "id": "nudge-feedback",
-  "name": "Nudge Feedback",
+  "id": "reinforceclaw-feedback",
+  "name": "ReinforceClaw Feedback",
   "description": "Rate AI responses good/bad — trains your local model via RL",
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
     "properties": {
-      "nudgeHost": { "type": "string", "default": "http://127.0.0.1:8420" }
+      "reinforceclawHost": { "type": "string", "default": "http://127.0.0.1:8420" },
+      "reinforceclawSecret": { "type": "string", "default": "" }
     }
   }
 }

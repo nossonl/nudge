@@ -9,17 +9,17 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from nudge import db
+from reinforceclaw import db
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PROJECT_ROOT_STR = str(PROJECT_ROOT)
-TRAIN_LOG_PATH = Path.home() / ".nudge" / "train.log"
-TRAIN_LOCK_PATH = Path.home() / ".nudge" / "train.lock"
-TRAIN_RETRY_PATH = Path.home() / ".nudge" / "train.retry"
+TRAIN_LOG_PATH = Path.home() / ".reinforceclaw" / "train.log"
+TRAIN_LOCK_PATH = Path.home() / ".reinforceclaw" / "train.lock"
+TRAIN_RETRY_PATH = Path.home() / ".reinforceclaw" / "train.retry"
 
 
 def load_config():
-    p = Path.home() / ".nudge" / "config.json"
+    p = Path.home() / ".reinforceclaw" / "config.json"
     return json.loads(p.read_text()) if p.exists() else {}
 
 
@@ -80,9 +80,9 @@ def queue_training(delay_seconds=0):
             pass
         TRAIN_RETRY_PATH.parent.mkdir(parents=True, exist_ok=True)
         TRAIN_RETRY_PATH.write_text(str(time.time() + delay_seconds))
-        _spawn_train([sys.executable, "-m", "nudge.hooks._common", "retry", str(delay_seconds)])
+        _spawn_train([sys.executable, "-m", "reinforceclaw.hooks._common", "retry", str(delay_seconds)])
         return
-    _spawn_train([sys.executable, "-m", "nudge.cli", "train", "--background"])
+    _spawn_train([sys.executable, "-m", "reinforceclaw.cli", "train", "--background"])
 
 
 def maybe_train(conn, config):

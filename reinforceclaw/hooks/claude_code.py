@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from nudge import db
-from nudge.hooks._common import load_config, read_stdin, maybe_train
+from reinforceclaw import db
+from reinforceclaw.hooks._common import load_config, read_stdin, maybe_train
 
 SOURCE = "claude_code"
 COMMANDS = {
@@ -18,6 +18,14 @@ COMMANDS = {
     "/rl train": "train", "/rl status": "status",
     "/rl rollback": "rollback", "/rl reset": "reset",
     "/rl on": "on", "/rl off": "off",
+    "/rc good": "good", "/rc bad": "bad", "/rc undo": "undo",
+    "/rc train": "train", "/rc status": "status",
+    "/rc rollback": "rollback", "/rc reset": "reset",
+    "/rc on": "on", "/rc off": "off",
+    "/reinforceclaw good": "good", "/reinforceclaw bad": "bad",
+    "/reinforceclaw undo": "undo", "/reinforceclaw train": "train",
+    "/reinforceclaw status": "status", "/reinforceclaw rollback": "rollback",
+    "/reinforceclaw reset": "reset", "/reinforceclaw on": "on", "/reinforceclaw off": "off",
     "/good": "good", "/bad": "bad",
 }
 
@@ -45,7 +53,7 @@ def handle_stop():
     fid = db.add_feedback(conn, config["model"], prompt, last_msg, 0, source=SOURCE)
 
     if config.get("panel_enabled", True):
-        from nudge.feedback import collect_rating
+        from reinforceclaw.feedback import collect_rating
         rating = collect_rating()
         if isinstance(rating, int):
             db.update_feedback_rating(conn, fid, rating)
@@ -71,9 +79,9 @@ def handle_prompt():
 
     if cmd in ("good", "bad"):
         if not config.get("model"):
-            sys.stderr.write("Run nudge init first.\n")
+            sys.stderr.write("Run reinforceclaw init first.\n")
             conn.close()
-            print(json.dumps({"result": "block", "reason": "nudge not initialized"}))
+            print(json.dumps({"result": "block", "reason": "reinforceclaw not initialized"}))
             return
         rating = 1 if cmd == "good" else -1
         pending = db.latest_pending(conn, source=SOURCE)
@@ -89,7 +97,7 @@ def handle_prompt():
         r = db.remove_last(conn)
         sys.stderr.write("\033[33mRemoved last rating\033[0m\n" if r else "Nothing to undo.\n")
     elif cmd == "train":
-        from nudge.hooks._common import queue_training
+        from reinforceclaw.hooks._common import queue_training
         queue_training()
         sys.stderr.write("Training started in background.\n")
     elif cmd == "status":
@@ -103,30 +111,30 @@ def handle_prompt():
     elif cmd == "rollback":
         prev = db.rollback(conn)
         if prev:
-            from nudge import trainer
+            from reinforceclaw import trainer
             trainer.hot_swap(config.get("server", "ollama"), prev["path"], config.get("model", ""))
         sys.stderr.write(f"\033[32mRolled back to v{prev['version']}\033[0m\n" if prev
                          else "No previous adapter.\n")
     elif cmd == "reset":
-        from nudge.cli import reset_state
+        from reinforceclaw.cli import reset_state
         conn.close()
         reset_state()
         sys.stderr.write("\033[32mReset complete.\033[0m\n")
-        print(json.dumps({"result": "block", "reason": f"nudge: /rl {cmd}"}))
+        print(json.dumps({"result": "block", "reason": f"reinforceclaw: /rl {cmd}"}))
         return
     elif cmd == "on":
         config["panel_enabled"] = True
-        from nudge.cli import save_config
+        from reinforceclaw.cli import save_config
         save_config(config)
         sys.stderr.write("\033[32mPanel on.\033[0m\n")
     elif cmd == "off":
         config["panel_enabled"] = False
-        from nudge.cli import save_config
+        from reinforceclaw.cli import save_config
         save_config(config)
         sys.stderr.write("\033[33mPanel off.\033[0m\n")
 
     conn.close()
-    print(json.dumps({"result": "block", "reason": f"nudge: /rl {cmd}"}))
+    print(json.dumps({"result": "block", "reason": f"reinforceclaw: /rl {cmd}"}))
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from nudge import db
+from reinforceclaw import db
 
 
 def test_full_lifecycle():

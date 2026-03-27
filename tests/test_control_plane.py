@@ -2,7 +2,7 @@ from argparse import Namespace
 import io
 import json
 
-from nudge import cli, db, scheduler, trainer
+from reinforceclaw import cli, db, scheduler, trainer
 
 
 def _add_feedback(conn, rating):
@@ -10,7 +10,7 @@ def _add_feedback(conn, rating):
 
 
 def test_add_adapter_keeps_one_active_and_rollback_activates_previous(tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     db.add_adapter(conn, 1, str(tmp_path / "v1" / "adapter.safetensors"))
     db.add_adapter(conn, 2, str(tmp_path / "v2" / "adapter.safetensors"))
 
@@ -29,7 +29,7 @@ def test_add_adapter_keeps_one_active_and_rollback_activates_previous(tmp_path):
 
 
 def test_record_training_round_stays_candidate_until_activated(tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     fid = _add_feedback(conn, 1)
 
     db.record_training_round(conn, 0.1, 1, 1, str(tmp_path / "v1" / "adapter.safetensors"), metrics={"ok": True}, feedback_ids=[fid])
@@ -46,8 +46,51 @@ def test_record_training_round_stays_candidate_until_activated(tmp_path):
     assert row["adapter_version"] == 1
 
 
+def test_activate_training_round_can_recover_from_candidate_metrics(tmp_path):
+    conn = db.connect(tmp_path / "reinforceclaw.db")
+    fid = _add_feedback(conn, 1)
+
+    db.record_training_round(
+        conn,
+        0.25,
+        3,
+        1,
+        str(tmp_path / "v1" / "adapter.safetensors"),
+        metrics={"ok": True},
+        feedback_ids=[fid],
+    )
+    db.activate_training_round(conn, 1)
+
+    ema, count = db.get_ema(conn)
+    row = conn.execute("SELECT trained, adapter_version FROM feedback WHERE id=?", (fid,)).fetchone()
+    assert round(ema, 3) == 0.25
+    assert count == 3
+    assert row["trained"] == 1
+    assert row["adapter_version"] == 1
+
+
+def test_openclaw_authorized_requires_secret(monkeypatch):
+    from reinforceclaw.hooks import openclaw
+
+    monkeypatch.setattr(openclaw, "_cfg", lambda: {"openclaw_secret": "secret"})
+    assert openclaw._authorized({"X-ReinforceClaw-Secret": "secret"}) is True
+    assert openclaw._authorized({"X-ReinforceClaw-Secret": "wrong"}) is False
+    assert openclaw._authorized({}) is False
+
+
+def test_feedback_collect_rating_warns_without_tty(monkeypatch):
+    from reinforceclaw import feedback
+
+    monkeypatch.setattr(feedback, "_open_tty", lambda: None)
+    err = []
+    monkeypatch.setattr(feedback.sys.stderr, "write", lambda msg: err.append(msg))
+    monkeypatch.setattr(feedback.sys.stderr, "flush", lambda: None)
+    assert feedback.collect_rating() is None
+    assert err and "panel unavailable" in err[0]
+
+
 def test_rollback_to_marks_newer_versions_rolled_back(tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     for version in (1, 2, 3):
         db.add_adapter(conn, version, str(tmp_path / f"v{version}" / "adapter.safetensors"))
 
@@ -61,7 +104,7 @@ def test_rollback_to_marks_newer_versions_rolled_back(tmp_path):
 
 
 def test_rollback_is_noop_without_previous_adapter(tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     db.add_adapter(conn, 1, str(tmp_path / "v1" / "adapter.safetensors"))
 
     assert db.rollback(conn) is None
@@ -84,12 +127,12 @@ def test_parse_time_rejects_invalid_values():
 
 
 def test_maybe_train_only_queues_when_auto(monkeypatch, tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     _add_feedback(conn, 1)
     _add_feedback(conn, -1)
     queued = []
 
-    monkeypatch.setattr("nudge.hooks._common.queue_training", lambda: queued.append(True))
+    monkeypatch.setattr("reinforceclaw.hooks._common.queue_training", lambda: queued.append(True))
 
     cli._maybe_train({"train_schedule": "03:00", "batch_min": 2}, conn)
     assert queued == []
@@ -99,9 +142,9 @@ def test_maybe_train_only_queues_when_auto(monkeypatch, tmp_path):
 
 
 def test_codex_stop_stores_pending_even_when_panel_disabled(monkeypatch, tmp_path):
-    from nudge.hooks import codex
+    from reinforceclaw.hooks import codex
 
-    db_path = tmp_path / "nudge.db"
+    db_path = tmp_path / "reinforceclaw.db"
     real_connect = db.connect
     monkeypatch.setattr(codex, "load_config", lambda: {"model": "m", "panel_enabled": False})
     monkeypatch.setattr(codex.db, "connect", lambda: real_connect(db_path))
@@ -115,9 +158,9 @@ def test_codex_stop_stores_pending_even_when_panel_disabled(monkeypatch, tmp_pat
 
 
 def test_codex_stop_spawns_detached_panel(monkeypatch, tmp_path):
-    from nudge.hooks import codex
+    from reinforceclaw.hooks import codex
 
-    db_path = tmp_path / "nudge.db"
+    db_path = tmp_path / "reinforceclaw.db"
     real_connect = db.connect
     spawned = {}
     monkeypatch.setattr(codex, "load_config", lambda: {"model": "m", "panel_enabled": True})
@@ -140,7 +183,7 @@ def test_codex_stop_spawns_detached_panel(monkeypatch, tmp_path):
 
 
 def test_claude_prompt_only_intercepts_exact_commands(monkeypatch, tmp_path):
-    from nudge.hooks import claude_code
+    from reinforceclaw.hooks import claude_code
 
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": {"content": "/good job", "type": "user"}})))
     try:
@@ -152,9 +195,9 @@ def test_claude_prompt_only_intercepts_exact_commands(monkeypatch, tmp_path):
 
 
 def test_codex_prompt_rates_latest_pending(monkeypatch, tmp_path):
-    from nudge.hooks import codex
+    from reinforceclaw.hooks import codex
 
-    db_path = tmp_path / "nudge.db"
+    db_path = tmp_path / "reinforceclaw.db"
     real_connect = db.connect
     conn = real_connect(db_path)
     fid = db.add_feedback(conn, "m", "(codex)", "resp", 0, source="codex")
@@ -176,7 +219,7 @@ def test_codex_prompt_rates_latest_pending(monkeypatch, tmp_path):
 
 
 def test_codex_prompt_only_intercepts_exact_commands(monkeypatch):
-    from nudge.hooks import codex
+    from reinforceclaw.hooks import codex
 
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": {"content": "/bad plan", "type": "user"}})))
     try:
@@ -189,7 +232,7 @@ def test_codex_prompt_only_intercepts_exact_commands(monkeypatch):
 
 def test_install_launchd_unloads_before_load(monkeypatch, tmp_path):
     calls = []
-    plist = tmp_path / "com.nudge.train.plist"
+    plist = tmp_path / "com.reinforceclaw.train.plist"
 
     def fake_run(argv, capture_output=True):
         calls.append(tuple(argv))
@@ -207,7 +250,7 @@ def test_install_launchd_unloads_before_load(monkeypatch, tmp_path):
 
 
 def test_cmd_train_background_skips_confirmation(monkeypatch, tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     _add_feedback(conn, 1)
     _add_feedback(conn, -1)
 
@@ -227,7 +270,7 @@ def test_cmd_train_background_skips_confirmation(monkeypatch, tmp_path):
 
 
 def test_cmd_train_background_requeues_memory_pressure(monkeypatch, tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     _add_feedback(conn, 1)
     _add_feedback(conn, -1)
     queued = []
@@ -236,7 +279,7 @@ def test_cmd_train_background_requeues_memory_pressure(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.db, "connect", lambda: conn)
     monkeypatch.setattr(cli, "_trainable_untrained", lambda _conn: 2)
     monkeypatch.setattr(cli.trainer, "train_result", lambda cfg, _conn: {"status": "skipped", "reason": "memory_pressure"})
-    monkeypatch.setattr("nudge.hooks._common.queue_training", lambda delay_seconds=0: queued.append(delay_seconds))
+    monkeypatch.setattr("reinforceclaw.hooks._common.queue_training", lambda delay_seconds=0: queued.append(delay_seconds))
     monkeypatch.setattr(cli.console, "print", lambda *args, **kwargs: None)
 
     cli.cmd_train(Namespace(background=True))
@@ -245,7 +288,7 @@ def test_cmd_train_background_requeues_memory_pressure(monkeypatch, tmp_path):
 
 
 def test_cmd_train_rejects_candidate_when_gate_fails(monkeypatch, tmp_path):
-    db_path = tmp_path / "nudge.db"
+    db_path = tmp_path / "reinforceclaw.db"
     real_connect = db.connect
     conn = db.connect(db_path)
     _add_feedback(conn, 1)
@@ -318,14 +361,14 @@ def test_scheduled_background_ignores_missing_idle_telemetry(monkeypatch):
 
 
 def test_smoke_status_reports_below_threshold(tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     status = trainer.smoke_status({"train_schedule": "03:00", "batch_min": 2}, conn)
     assert status["would_train"] is False
     assert status["reason"] == "below_threshold"
 
 
 def test_train_result_reports_below_threshold(tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     old_acquire = trainer._acquire_lock
     old_release = trainer._release_lock
     trainer._acquire_lock = lambda: 1
@@ -340,7 +383,7 @@ def test_train_result_reports_below_threshold(tmp_path):
 
 
 def test_train_result_retries_mlx_insufficient_budget_in_fresh_process(monkeypatch, tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     _add_feedback(conn, 1)
     _add_feedback(conn, -1)
 
@@ -443,7 +486,7 @@ def test_degrade_plan_keeps_memory_limit_above_model_floor():
 
 
 def test_build_batch_uses_replay_ratio(tmp_path):
-    conn = db.connect(tmp_path / "nudge.db")
+    conn = db.connect(tmp_path / "reinforceclaw.db")
     fresh_ids = [_add_feedback(conn, 1) for _ in range(8)]
     trained_ids = [_add_feedback(conn, -1) for _ in range(8)]
     db.mark_trained(conn, trained_ids, 1)
@@ -592,7 +635,7 @@ def test_behavior_logprobs_reads_context_for_mispo():
 
 
 def test_cmd_collect_falls_back_to_local_when_ollama_unreachable(monkeypatch, tmp_path):
-    db_path = tmp_path / "nudge.db"
+    db_path = tmp_path / "reinforceclaw.db"
     real_connect = db.connect
     monkeypatch.setattr(cli, "_load_model_cfg", lambda: {"model": "m", "server": "ollama", "lora_rank": 8})
     monkeypatch.setattr(cli.db, "connect", lambda: real_connect(db_path))
@@ -626,7 +669,7 @@ def test_cmd_collect_falls_back_to_local_when_ollama_unreachable(monkeypatch, tm
 
 
 def test_cmd_collect_ignores_single_judge_failure_and_continues(monkeypatch, tmp_path):
-    db_path = tmp_path / "nudge.db"
+    db_path = tmp_path / "reinforceclaw.db"
     real_connect = db.connect
     monkeypatch.setattr(cli, "_load_model_cfg", lambda: {"model": "m", "server": "ollama", "lora_rank": 8})
     monkeypatch.setattr(cli.db, "connect", lambda: real_connect(db_path))

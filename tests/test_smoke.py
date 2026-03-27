@@ -4,7 +4,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from nudge.backend_mlx import mlx_drain
+from reinforceclaw.backend_mlx import mlx_drain
 
 
 def _free():
@@ -90,7 +90,7 @@ EVAL_PROMPTS = PROMPTS[40:]
 
 def _generate(model, tokenizer, prompt):
     from mlx_lm import generate
-    from nudge.trainer import _apply_chat_template
+    from reinforceclaw.trainer import _apply_chat_template
     if hasattr(tokenizer, "apply_chat_template"):
         formatted = _apply_chat_template(
             tokenizer,
@@ -120,8 +120,8 @@ def run(model_name=None, rounds=3):
     except ImportError:
         print("mlx-lm not installed."); return
 
-    from nudge import db
-    from nudge.trainer import train_result, load_model
+    from reinforceclaw import db
+    from reinforceclaw.trainer import train_result, load_model
 
     model_name = model_name or "Qwen/Qwen2.5-7B-Instruct"
     print(f"Model: {model_name}", flush=True)

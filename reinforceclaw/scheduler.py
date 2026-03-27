@@ -9,11 +9,11 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-PLIST_PATH = Path.home() / "Library/LaunchAgents/com.nudge.train.plist"
-SYSTEMD_PATH = Path.home() / ".config/systemd/user/nudge-train.timer"
-SYSTEMD_SERVICE = Path.home() / ".config/systemd/user/nudge-train.service"
+PLIST_PATH = Path.home() / "Library/LaunchAgents/com.reinforceclaw.train.plist"
+SYSTEMD_PATH = Path.home() / ".config/systemd/user/reinforceclaw-train.timer"
+SYSTEMD_SERVICE = Path.home() / ".config/systemd/user/reinforceclaw-train.service"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TRAIN_LOG = Path.home() / ".nudge" / "train.log"
+TRAIN_LOG = Path.home() / ".reinforceclaw" / "train.log"
 DEFAULT_WINDOW_MINUTES = 180
 
 
@@ -46,8 +46,8 @@ def uninstall():
         subprocess.run(["launchctl", "unload", str(PLIST_PATH)], capture_output=True)
         PLIST_PATH.unlink()
     if SYSTEMD_PATH.exists():
-        subprocess.run(["systemctl", "--user", "disable", "--now", "nudge-train.timer"], capture_output=True)
-        subprocess.run(["systemctl", "--user", "stop", "nudge-train.service"], capture_output=True)
+        subprocess.run(["systemctl", "--user", "disable", "--now", "reinforceclaw-train.timer"], capture_output=True)
+        subprocess.run(["systemctl", "--user", "stop", "reinforceclaw-train.service"], capture_output=True)
         SYSTEMD_PATH.unlink()
         SYSTEMD_SERVICE.unlink(missing_ok=True)
         subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
@@ -78,12 +78,12 @@ def _install_launchd(attempt_times):
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.nudge.train</string>
+    <string>com.reinforceclaw.train</string>
     <key>ProgramArguments</key>
     <array>
         <string>{sys.executable}</string>
         <string>-m</string>
-        <string>nudge.cli</string>
+        <string>reinforceclaw.cli</string>
         <string>train</string>
         <string>--background</string>
     </array>
@@ -115,10 +115,10 @@ def _install_systemd(attempt_times):
     SYSTEMD_PATH.parent.mkdir(parents=True, exist_ok=True)
     # service
     SYSTEMD_SERVICE.write_text(f"""[Unit]
-Description=Nudge RL training
+Description=ReinforceClaw RL training
 
 [Service]
-ExecStart={sys.executable} -m nudge.cli train --background
+ExecStart={sys.executable} -m reinforceclaw.cli train --background
 WorkingDirectory={PROJECT_ROOT}
 Environment=PYTHONPATH={PROJECT_ROOT}
 StandardOutput=append:{TRAIN_LOG}
@@ -129,7 +129,7 @@ StandardError=append:{TRAIN_LOG}
         for hour, minute in attempt_times
     )
     SYSTEMD_PATH.write_text(f"""[Unit]
-Description=Nudge daily training
+Description=ReinforceClaw daily training
 
 [Timer]
 {calendar}
@@ -138,7 +138,7 @@ Persistent=false
 [Install]
 WantedBy=timers.target
 """)
-    subprocess.run(["systemctl", "--user", "disable", "--now", "nudge-train.timer"], capture_output=True)
+    subprocess.run(["systemctl", "--user", "disable", "--now", "reinforceclaw-train.timer"], capture_output=True)
     subprocess.run(["systemctl", "--user", "daemon-reload"], capture_output=True)
-    r = subprocess.run(["systemctl", "--user", "enable", "--now", "nudge-train.timer"], capture_output=True)
+    r = subprocess.run(["systemctl", "--user", "enable", "--now", "reinforceclaw-train.timer"], capture_output=True)
     return r.returncode == 0

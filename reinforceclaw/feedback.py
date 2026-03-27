@@ -35,6 +35,8 @@ def collect_rating() -> Optional[int]:
     """Show panel, wait for keypress. Returns +1, -1, or None."""
     fd = _open_tty()
     if fd is None:
+        sys.stderr.write("reinforceclaw: panel unavailable; use /good or /bad.\n")
+        sys.stderr.flush()
         return None
 
     sys.stderr.write(PANEL)

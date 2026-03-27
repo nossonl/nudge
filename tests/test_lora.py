@@ -14,7 +14,7 @@ def test_lora_lifecycle():
     except ImportError:
         print("mlx-lm not installed, skipping"); return
 
-    from nudge.trainer import _apply_lora, load_model, _compute_logprobs
+    from reinforceclaw.trainer import _apply_lora, load_model, _compute_logprobs
 
     model_name = "Qwen/Qwen3.5-9B"
     print(f"Model: {model_name}")

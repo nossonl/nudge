@@ -10,8 +10,8 @@ def test_train_minimal():
     except ImportError:
         print("mlx-lm not installed, skipping"); return
 
-    from nudge import db
-    from nudge.trainer import train
+    from reinforceclaw import db
+    from reinforceclaw.trainer import train
 
     model_name = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
 
