@@ -1,7 +1,7 @@
 {
   "id": "reinforceclaw-feedback",
   "name": "ReinforceClaw Feedback",
-  "description": "Rate AI responses good/bad — trains your local model via RL",
+  "description": "Rate AI responses good/bad and train your local model via RL",
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
@@ -9,7 +9,12 @@
     "properties": {
       "reinforceclawHost": { "type": "string", "default": "http://127.0.0.1:8420" },
       "reinforceclawSecret": { "type": "string", "default": "" },
-      "reinforceclawPython": { "type": "string", "default": "" },
+      "reinforceclawFeedbackMode": {
+        "type": "string",
+        "enum": ["slash_reactions_prompt", "slash_and_reactions", "slash_only"],
+        "default": "slash_reactions_prompt"
+      },
+      "reinforceclawRaterUsers": { "type": "string", "default": "" },
       "reinforceclawAllowAdminCommands": { "type": "boolean", "default": false },
       "reinforceclawAdminUsers": { "type": "string", "default": "" }
     }

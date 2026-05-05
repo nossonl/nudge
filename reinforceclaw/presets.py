@@ -17,13 +17,10 @@ _SIZE_MULT = {
 
 def _scale_cut(total_b: float) -> float:
     """Softmax sharpening + router/depth variance at very large total sizes."""
-    if total_b <= 100:
-        return 1.0
-    if total_b <= 250:   # Qwen3-235B region
-        return 0.60
-    if total_b <= 500:   # Maverick-400, Mistral-Large-3-675 (dense) sits just above
-        return 0.45
-    return 0.35          # DeepSeek-671, Kimi-1T, anything larger
+    for threshold, mult in ((100, 1.0), (250, 0.60), (500, 0.45)):
+        if total_b <= threshold:
+            return mult
+    return 0.35
 
 
 def _moe_mult(kind: str, total_b: float, active_b: float) -> float:
@@ -31,41 +28,37 @@ def _moe_mult(kind: str, total_b: float, active_b: float) -> float:
     if kind != "moe":
         return 1.0
     sparsity = total_b / max(active_b, 1.0)
-    if sparsity <= 4:
-        return 0.95
-    if sparsity <= 10:
-        return 0.85
-    if sparsity <= 20:
-        return 0.70
+    for threshold, mult in ((4, 0.95), (10, 0.85), (20, 0.70)):
+        if sparsity <= threshold:
+            return mult
     return 0.55
 
-_PRESET_LR_MULT = {"careful": 0.6, "balanced": 1.0, "aggressive": 1.6}
-_PRESET_KL = {"careful": 0.0020, "balanced": 0.0010, "aggressive": 0.0005}
-_PRESET_STEPS = {"careful": 24, "balanced": 32, "aggressive": 48}
-_PRESET_TRAJ_CLIP = {
-    "careful":    [0.996, 1.001],
-    "balanced":   [0.994, 1.002],
-    "aggressive": [0.992, 1.004],
+_PRESETS = {
+    "careful": {"lr_mult": 0.6, "kl": 0.0020, "steps": 24, "traj_clip": [0.996, 1.001]},
+    "balanced": {"lr_mult": 1.0, "kl": 0.0010, "steps": 32, "traj_clip": [0.994, 1.002]},
+    "aggressive": {"lr_mult": 1.6, "kl": 0.0005, "steps": 48, "traj_clip": [0.992, 1.004]},
 }
-
-BATCH_BY_BUCKET = {"tiny": 30, "small": 30, "mid": 32, "large": 36, "xl": 40}
-BATCH_SIZE_BY_BUCKET = {"tiny": 8, "small": 6, "mid": 4, "large": 3, "xl": 2}
-GRAD_ACCUM_BY_BUCKET = {"tiny": 1, "small": 1, "mid": 2, "large": 2, "xl": 4}
-RANK_BY_BUCKET = {"tiny": 16, "small": 16, "mid": 16, "large": 16, "xl": 8}
+_BUCKETS = {
+    "tiny": {"batch_min": 30, "batch_size": 8, "grad_accum": 1, "rank": 16},
+    "small": {"batch_min": 30, "batch_size": 6, "grad_accum": 1, "rank": 16},
+    "mid": {"batch_min": 32, "batch_size": 4, "grad_accum": 2, "rank": 16},
+    "large": {"batch_min": 36, "batch_size": 3, "grad_accum": 2, "rank": 16},
+    "xl": {"batch_min": 40, "batch_size": 2, "grad_accum": 4, "rank": 8},
+}
 
 
 def pick(profile: ModelProfile, preset: str = "balanced") -> dict:
     """Return a full training config for this (profile, preset)."""
-    preset = preset if preset in _PRESET_LR_MULT else "balanced"
+    preset = preset if preset in _PRESETS else "balanced"
     bucket = profile.size_bucket if profile.size_bucket in _SIZE_MULT else "mid"
+    p, b = _PRESETS[preset], _BUCKETS[bucket]
     lr = (ANCHOR_BALANCED
           * _SIZE_MULT[bucket]
           * _scale_cut(profile.total_b)
           * _moe_mult(profile.kind, profile.total_b, profile.active_b)
-          * _PRESET_LR_MULT[preset])
-    kl = _PRESET_KL[preset] * (0.5 if profile.kind == "moe" else 1.0)
-    rank = RANK_BY_BUCKET[bucket] + (8 if profile.kind == "moe" else 0)
-    rank = min(rank, 32)
+          * p["lr_mult"])
+    kl = p["kl"] * (0.5 if profile.kind == "moe" else 1.0)
+    rank = b["rank"] + (8 if profile.kind == "moe" else 0)
 
     return {
         "lr": _round(lr),
@@ -73,11 +66,11 @@ def pick(profile: ModelProfile, preset: str = "balanced") -> dict:
         "lora_rank": rank,
         "lora_alpha": rank,
         "lora_target": "attention",
-        "batch_min": BATCH_BY_BUCKET[bucket],
-        "batch_size": BATCH_SIZE_BY_BUCKET[bucket],
-        "grad_accum": GRAD_ACCUM_BY_BUCKET[bucket],
-        "steps": _PRESET_STEPS[preset],
-        "traj_clip": list(_PRESET_TRAJ_CLIP[preset]),
+        "batch_min": b["batch_min"],
+        "batch_size": b["batch_size"],
+        "grad_accum": b["grad_accum"],
+        "steps": p["steps"],
+        "traj_clip": list(p["traj_clip"]),
         "token_clip": [0.5, 2.0],
         "pos_weight": 1.2 if preset != "careful" else 1.0,
         "replay_ratio": 0.0,
@@ -88,6 +81,4 @@ def pick(profile: ModelProfile, preset: str = "balanced") -> dict:
 
 
 def _round(x: float, sig: int = 7) -> float:
-    if x <= 0:
-        return 0.0
-    return float(f"{x:.{sig}g}")
+    return float(f"{x:.{sig}g}") if x > 0 else 0.0

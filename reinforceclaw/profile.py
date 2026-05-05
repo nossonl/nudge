@@ -27,11 +27,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
+import heapq
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 _MOE_KEYS = ("num_local_experts", "num_experts", "moe_num_experts", "n_routed_experts")
 _DETECT_CACHE: dict[str, "ModelProfile"] = {}
+_DETECT_CACHE_MAX = 64
 _MOE_NAME_HINTS = (
     "moe", "mixtral", "16e", "128e", "phi-3.5-moe", "phi-moe",
     "deepseek-v2", "deepseek-v3", "deepseek-v4", "deepseek-r1-671", "deepseek-coder-v2",
@@ -137,25 +139,21 @@ class ModelProfile:
     source: str         # "hf_config" | "name_only" | "mixed" | "cloud_name"
 
     def as_dict(self) -> dict:
-        return {
-            "kind": self.kind, "family": self.family, "size_bucket": self.size_bucket,
-            "total_b": self.total_b, "active_b": self.active_b,
-            "provider": self.provider, "trainable": self.trainable, "source": self.source,
-        }
+        return asdict(self)
 
 
 def detect(model_name_or_path: str) -> ModelProfile:
     """Best-effort profile. Never raises. Config trumps name when both available."""
     raw = (model_name_or_path or "").strip()
     if raw in _DETECT_CACHE:
+        _DETECT_CACHE[raw] = _DETECT_CACHE.pop(raw)
         return _DETECT_CACHE[raw]
     cloud = _detect_cloud(raw.lower())
     if cloud:
         prof = ModelProfile(kind="cloud", family=cloud, size_bucket="unknown",
                             total_b=0.0, active_b=0.0, provider=f"cloud-{cloud}",
                             trainable=False, source="cloud_name")
-        _DETECT_CACHE[raw] = prof
-        return prof
+        return _cache_profile(raw, prof)
 
     cfg = _load_hf_config(raw) or {}
     name_bits = _from_name(raw)
@@ -175,8 +173,14 @@ def detect(model_name_or_path: str) -> ModelProfile:
     prof = ModelProfile(kind=kind, family=family, size_bucket=bucket,
                         total_b=float(total_b), active_b=float(active_b),
                         provider=provider, trainable=(provider not in {"ollama", "gguf"}), source=source)
-    _DETECT_CACHE[raw] = prof
-    return prof
+    return _cache_profile(raw, prof)
+
+
+def _cache_profile(key: str, profile: ModelProfile) -> ModelProfile:
+    if len(_DETECT_CACHE) >= _DETECT_CACHE_MAX:
+        _DETECT_CACHE.pop(next(iter(_DETECT_CACHE)))
+    _DETECT_CACHE[key] = profile
+    return profile
 
 
 def _detect_cloud(low: str) -> str | None:
@@ -193,8 +197,7 @@ def _detect_cloud(low: str) -> str | None:
 
 def _detect_provider(raw: str) -> str:
     low = raw.lower()
-    tail = low.rsplit("/", 1)[-1]
-    if raw.endswith(".gguf") or ".gguf/" in low or tail.endswith(("-gguf", "_gguf")) or "-gguf-" in tail or "_gguf_" in tail:
+    if re.search(r"(?:^|[-_/.])gguf(?:[-_./]|$)", low):
         return "gguf"
     if ":" in raw and "/" not in raw.split(":", 1)[0]:
         return "ollama"
@@ -221,6 +224,12 @@ def _load_hf_config(model_name_or_path: str) -> dict | None:
 
 
 def _config_candidates(name: str):
+    def mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
     p = Path(name).expanduser()
     if p.is_dir():
         yield p / "config.json"
@@ -234,7 +243,11 @@ def _config_candidates(name: str):
         hub_root = root / "hub" / f"models--{safe_id}"
         snapshots = hub_root / "snapshots"
         if snapshots.exists():
-            for snap in sorted(snapshots.iterdir(), reverse=True)[:5]:
+            try:
+                snaps = heapq.nlargest(5, snapshots.iterdir(), key=mtime)
+            except OSError:
+                snaps = ()
+            for snap in snaps:
                 yield snap / "config.json"
     # LM Studio keeps model dirs under ~/.cache/lm-studio/models/<org>/<repo>
     lmstudio = Path.home() / ".cache" / "lm-studio" / "models"
@@ -259,14 +272,14 @@ def _params_from_config(cfg: dict) -> float:
     """Rough param count in B from config. Good enough for bucketing."""
     if not cfg:
         return 0.0
-    h = int(cfg.get("hidden_size") or 0)
-    l = int(cfg.get("num_hidden_layers") or 0)
-    i = int(cfg.get("intermediate_size") or 4 * h)
-    v = int(cfg.get("vocab_size") or 0)
+    h = _int(cfg.get("hidden_size"))
+    l = _int(cfg.get("num_hidden_layers"))
+    i = _int(cfg.get("intermediate_size"), 4 * h)
+    v = _int(cfg.get("vocab_size"))
     if not (h and l):
         return 0.0
     attn = 4 * h * h
-    experts = int(cfg.get("num_local_experts") or cfg.get("num_experts") or 1)
+    experts = _int(cfg.get("num_local_experts") or cfg.get("num_experts"), 1)
     ffn_per_expert = 3 * h * i
     per_layer = attn + experts * ffn_per_expert
     return (l * per_layer + 2 * v * h) / 1e9
@@ -275,14 +288,14 @@ def _params_from_config(cfg: dict) -> float:
 def _active_from_config(cfg: dict, total_b: float, is_moe: bool) -> float:
     if not (cfg and is_moe and total_b):
         return total_b
-    experts = int(cfg.get("num_local_experts") or cfg.get("num_experts") or 1)
-    top_k = int(cfg.get("num_experts_per_tok") or cfg.get("num_experts_per_token") or 2)
+    experts = _int(cfg.get("num_local_experts") or cfg.get("num_experts"), 1)
+    top_k = _int(cfg.get("num_experts_per_tok") or cfg.get("num_experts_per_token"), 2)
     if experts <= 1:
         return total_b
-    h = int(cfg.get("hidden_size") or 0)
-    l = int(cfg.get("num_hidden_layers") or 0)
-    i = int(cfg.get("intermediate_size") or 4 * h)
-    v = int(cfg.get("vocab_size") or 0)
+    h = _int(cfg.get("hidden_size"))
+    l = _int(cfg.get("num_hidden_layers"))
+    i = _int(cfg.get("intermediate_size"), 4 * h)
+    v = _int(cfg.get("vocab_size"))
     if not (h and l):
         return total_b
     active_ffn = min(top_k, experts) * 3 * h * i
@@ -313,8 +326,8 @@ def _from_name(name: str) -> dict:
         total_b = _size_to_b(active_pair.group(1), active_pair.group(2))
         active_b = float(active_pair.group(3)) / (1000 if active_pair.group(4) == "m" else 1)
     else:
-        totals = [_size_to_b(value, unit) for value, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([bt])(?![a-z])", low)]
-        total_b = max(totals) if totals else 0.0
+        matches = re.findall(r"(\d+(?:\.\d+)?)\s*([bt])(?![a-z])", low)
+        total_b = max((_size_to_b(value, unit) for value, unit in matches), default=0.0)
         active_match = re.search(r"[-_:/]a(\d+(?:\.\d+)?)b(?![a-z])", low)
         active_b = float(active_match.group(1)) if active_match else total_b
     # Known-size override for big-name MoEs whose repo ID under-states size
@@ -333,6 +346,13 @@ def _from_name(name: str) -> dict:
 
 def _size_to_b(value: str, unit: str) -> float:
     return float(value) * (1000 if unit == "t" else 1)
+
+
+def _int(value, default=0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
 
 
 def _canonicalize(name: str) -> str:

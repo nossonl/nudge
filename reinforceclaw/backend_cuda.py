@@ -25,7 +25,7 @@ def _available_bytes() -> int | None:
                 if line.startswith("MemAvailable:"):
                     return int(line.split()[1]) * 1024
     except Exception:
-        return None
+        pass
     return None
 
 
@@ -72,6 +72,7 @@ class CUDABackend:
         return {"name": props.name, "total_memory": props.total_memory}
 
     def apply_limits(self, limit_bytes: int, cache_fraction: float = 0.25) -> None:
+        _ = cache_fraction  # CUDA exposes only a hard per-process fraction; MLX also tunes cache.
         total = max(1, self.hardware().total_memory_bytes)
         frac = min(0.98, max(0.05, limit_bytes / total))
         try:
@@ -117,9 +118,7 @@ class CUDABackend:
             pass
 
     def preferred_dtype(self):
-        if self.torch.cuda.is_bf16_supported():
-            return self.torch.bfloat16
-        return self.torch.float16
+        return self.torch.bfloat16 if self.torch.cuda.is_bf16_supported() else self.torch.float16
 
     def memory_snapshot(self) -> dict[str, float]:
         return {

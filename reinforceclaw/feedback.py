@@ -4,18 +4,11 @@
 
 import os
 import sys
-from typing import Optional, Literal
+from typing import Literal
 
 UNAVAILABLE = "unavailable"
 
 _KEYS = {"1": 1, "2": -1, "3": None}
-
-
-def _open_tty():
-    try:
-        return os.open("/dev/tty", os.O_RDONLY)
-    except OSError:
-        return None
 
 
 PANEL = (
@@ -33,11 +26,12 @@ def _clear_panel():
     sys.stderr.flush()
 
 
-def collect_rating() -> Optional[int] | Literal["unavailable"]:
+def collect_rating() -> int | None | Literal["unavailable"]:
     """Show panel, wait for keypress. Returns +1, -1, None, or unavailable."""
-    fd = _open_tty()
-    if fd is None:
-        sys.stderr.write("reinforceclaw: panel unavailable; use /good or /bad.\n")
+    try:
+        fd = os.open("/dev/tty", os.O_RDONLY)
+    except OSError:
+        sys.stderr.write("reinforceclaw: panel unavailable; use /rl good or /rl bad.\n")
         sys.stderr.flush()
         return UNAVAILABLE
 
@@ -48,13 +42,15 @@ def collect_rating() -> Optional[int] | Literal["unavailable"]:
     old = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        ch = os.read(fd, 3).decode("utf-8", errors="ignore")
+        ch = os.read(fd, 8).decode("utf-8", errors="ignore")
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        os.close(fd)
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        finally:
+            os.close(fd)
 
     _clear_panel()
 
     if not ch or ch.startswith("\x1b"):
         return None
-    return _KEYS.get(ch)
+    return _KEYS.get(ch[:1])

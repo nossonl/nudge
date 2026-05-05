@@ -6,17 +6,36 @@ build-backend = "setuptools.build_meta"
 name = "reinforceclaw"
 version = "0.1.0"
 description = "Personal RL feedback system — rate AI responses, train local LoRA adapters"
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "ReinforceClaw" }]
+keywords = ["ai", "agents", "reinforcement-learning", "lora", "openclaw", "mlx", "cuda"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "safetensors>=0.4",
     "requests>=2.28",
     "rich>=13.0",
+    "tomlkit>=0.12",
 ]
 
 [project.optional-dependencies]
 mlx = [
-    "mlx>=0.30.0",
-    "mlx-lm>=0.30.0",
+    "mlx>=0.31.2",
+    "mlx-lm>=0.31.3",
+    "transformers>=5.0.0",
 ]
 cuda = [
     "torch>=2.1",
@@ -30,6 +49,9 @@ integrations = [
     "botbuilder-core>=4.17",
     "botbuilder-schema>=4.17",
     "python-telegram-bot>=21.0",
+]
+dev = [
+    "pytest>=8.0",
 ]
 
 [tool.setuptools]
@@ -45,5 +67,13 @@ reinforceclaw = [
 [tool.setuptools.packages.find]
 include = ["reinforceclaw*"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [project.scripts]
 reinforceclaw = "reinforceclaw.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/nossonl/ReinforceClaw"
+Repository = "https://github.com/nossonl/ReinforceClaw"
+Issues = "https://github.com/nossonl/ReinforceClaw/issues"

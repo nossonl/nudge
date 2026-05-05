@@ -1,30 +1,49 @@
 #!/usr/bin/env python3
 """Codex desktop app hook. Buttons after each response + prompt-command backups."""
 # click left → green (good). click right → red (bad).
-# click filled one again → unfills (undo). X closes the circles.
-# circles reappear after every response. prompt hook also supports /good and /bad.
+# X closes the circles.
+# circles reappear after every response. prompt hook also supports /rl good or /rl bad.
 
 import os
+import atexit
 import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 from reinforceclaw import db
 from reinforceclaw.hooks._common import (
     load_config, maybe_train, pending_context, pop_pending, read_stdin, save_pending,
-    last_msg_from, training_context, handle_agent_command,
+    last_msg_from, training_context, handle_agent_command, restore_pending,
 )
 
 SOURCE = "codex"
 PANEL_LOG_PATH = Path.home() / ".reinforceclaw" / "panel.log"
+PANEL_LOG_MAX_BYTES = 2 * 1024 * 1024
+_PANEL_LOG = None
+
+
+def _panel_log_file():
+    global _PANEL_LOG
+    db.secure_private_dir(PANEL_LOG_PATH.parent)
+    if _PANEL_LOG is None or _PANEL_LOG.closed:
+        try:
+            if PANEL_LOG_PATH.exists() and not PANEL_LOG_PATH.is_symlink() and PANEL_LOG_PATH.stat().st_size > PANEL_LOG_MAX_BYTES:
+                PANEL_LOG_PATH.replace(PANEL_LOG_PATH.with_suffix(".log.1"))
+        except OSError:
+            pass
+        fd = os.open(PANEL_LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        _PANEL_LOG = os.fdopen(fd, "a", encoding="utf-8")
+        atexit.register(_PANEL_LOG.close)
+    return _PANEL_LOG
 
 
 def _panel_log(message):
-    db.secure_private_dir(PANEL_LOG_PATH.parent)
-    fd = os.open(PANEL_LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    with os.fdopen(fd, "a", encoding="utf-8") as log:
-        log.write(message.rstrip() + "\n")
+    log = _panel_log_file()
+    log.write(message.rstrip() + "\n")
+    log.flush()
 
 
 def _show_buttons(key, config):
@@ -43,15 +62,14 @@ def _show_buttons(key, config):
     sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
     root.geometry(f"100x32+{sw // 2 - 50}+{sh - 70}")
 
-    selected = [None]
     colors = {1: "#22c55e", -1: "#ef4444"}
+    consumed = False
 
     def _click(canvas, oval, other_canvas, other_oval, rating):
-        if selected[0] == rating:
-            canvas.itemconfig(oval, fill="")
-            pop_pending(SOURCE, key)
-            selected[0] = None
+        nonlocal consumed
+        if consumed:
             return
+        consumed = True
         pending = pop_pending(SOURCE, key)
         if not pending:
             _panel_log(f"pending {key} already consumed")
@@ -60,14 +78,22 @@ def _show_buttons(key, config):
         canvas.itemconfig(oval, fill=colors[rating])
         other_canvas.itemconfig(other_oval, fill="")
         conn = db.connect()
-        db.add_feedback(
-            conn, pending["model"], pending["prompt"], pending["response"], rating,
-            context=pending.get("context"), source=SOURCE, event_id=pending.get("key"),
-            rollout_context=pending.get("rollout_context"),
-        )
-        maybe_train(conn, config)
-        conn.close()
-        selected[0] = rating
+        try:
+            added = False
+            try:
+                db.add_feedback(
+                    conn, pending["model"], pending["prompt"], pending["response"], rating,
+                    context=pending.get("context"), source=SOURCE, event_id=pending.get("key"),
+                    rollout_context=pending.get("rollout_context"),
+                )
+                added = True
+                maybe_train(conn, config)
+            except Exception:
+                if not added:
+                    restore_pending(pending)
+                raise
+        finally:
+            conn.close()
         root.destroy()
 
     bg = root.cget("bg")
@@ -83,8 +109,11 @@ def _show_buttons(key, config):
     c2.pack(side="left", padx=3)
 
     # X button to dismiss
-    def _dismiss():
-        pop_pending(SOURCE, key)
+    def _dismiss(*, consume=True):
+        nonlocal consumed
+        if consume and not consumed:
+            consumed = True
+            pop_pending(SOURCE, key)
         root.destroy()
 
     close = tk.Label(frame, text="✕", font=("Arial", 10), fg="gray", bg=bg, cursor="hand2")
@@ -94,7 +123,7 @@ def _show_buttons(key, config):
     c1.bind("<Button-1>", lambda e: _click(c1, o1, c2, o2, 1))
     c2.bind("<Button-1>", lambda e: _click(c2, o2, c1, o1, -1))
 
-    root.after(300000, _dismiss)
+    root.after(300000, lambda: _dismiss(consume=False))
     root.mainloop()
 
 
@@ -109,16 +138,18 @@ def handle_stop():
         return
 
     prompt = last_msg_from(data, "user") or "(codex)"
-    key = save_pending(
-        SOURCE, config["model"], prompt, last_msg,
-        context=pending_context(data), rollout_context=training_context(data, prompt, last_msg),
-    )
+    try:
+        key = save_pending(
+            SOURCE, config["model"], prompt, last_msg,
+            context=pending_context(data), rollout_context=training_context(data, prompt, last_msg),
+        )
+    except ValueError as exc:
+        _panel_log(f"pending skipped: {exc}")
+        return
     if not config.get("panel_enabled", True):
         return
 
-    db.secure_private_dir(PANEL_LOG_PATH.parent)
-    fd = os.open(PANEL_LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-    log = os.fdopen(fd, "a", encoding="utf-8")
+    log = _panel_log_file()
     try:
         subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "panel", key],
@@ -129,8 +160,7 @@ def handle_stop():
         )
     except Exception as exc:
         log.write(f"panel spawn error: {type(exc).__name__}: {exc}\n")
-    finally:
-        log.close()
+        log.flush()
 
 
 def handle_prompt():

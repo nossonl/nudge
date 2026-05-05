@@ -8,7 +8,9 @@ import sys
 import traceback
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 from reinforceclaw import db
 from reinforceclaw.hooks._common import (
     load_config, read_stdin, maybe_train, pending_context, pop_pending, save_pending,
@@ -33,7 +35,11 @@ def handle_stop():
         prompt = last_msg_from(data, "user")
         context = pending_context(data)
         rollout = training_context(data, prompt, last_msg)
-        key = save_pending(SOURCE, config["model"], prompt, last_msg, context=context, rollout_context=rollout)
+        try:
+            key = save_pending(SOURCE, config["model"], prompt, last_msg, context=context, rollout_context=rollout)
+        except ValueError as exc:
+            sys.stderr.write(f"reinforceclaw: pending skipped: {exc}\n")
+            return
         if not config.get("panel_enabled", True):
             return
         from reinforceclaw.feedback import collect_rating
@@ -41,10 +47,13 @@ def handle_stop():
         if isinstance(rating, int):
             conn = db.connect()
             db.add_feedback(conn, config["model"], prompt, last_msg, rating, context=context, source=SOURCE, event_id=key, rollout_context=rollout)
-            maybe_train(conn, config)
             pop_pending(SOURCE, key, context=context)
+            maybe_train(conn, config)
         elif rating is None:
             pop_pending(SOURCE, key, context=context)
+        elif rating == "unavailable":
+            # Keep the pending turn so /rl good or /rl bad can rate it from non-TTY clients.
+            pass
     except Exception as exc:
         sys.stderr.write(f"reinforceclaw hook error: {type(exc).__name__}: {exc}\n{traceback.format_exc(limit=4)}")
     finally:

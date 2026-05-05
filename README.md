@@ -6,19 +6,22 @@ Self-improving reinforcement learning for your AI agents. Set it up once, rate r
 
 ## Setup
 
-Apple Silicon:
+Current source checkout:
 
 ```bash
-pip install "reinforceclaw[mlx]"
+cd ReinforceClaw
+python3 -m pip install -e .
 reinforceclaw init
 ```
 
-Linux with CUDA:
+Published release, after the PyPI package is live:
 
 ```bash
-pip install "reinforceclaw[cuda]"
+python3 -m pip install --no-cache-dir reinforceclaw
 reinforceclaw init
 ```
+
+Install the small base package first, then let the wizard add the right ML training backend for your machine. That keeps setup quiet while still supporting MLX on Apple Silicon and CUDA on Linux. If you already know what you want, you can install everything up front with `python3 -m pip install "reinforceclaw[mlx]"` on Apple Silicon or `python3 -m pip install "reinforceclaw[cuda]"` on Linux with CUDA.
 
 You can run the wizard yourself or tell your coding agent: "Set up ReinforceClaw for me." Pick your agent, local trainable model, and training preset. After that, just use your agent.
 
@@ -57,7 +60,7 @@ You do not touch training. Once set up, it runs continuously in the background. 
  
 ## Commands
  
-Once set up, inside Claude Code, Codex, or any OpenClaw-connected channel, including Telegram, WhatsApp, Slack, and Discord, you can also use `/rl`:
+Once set up, inside Claude Code, Codex, or any OpenClaw-connected channel, including Telegram, WhatsApp, Slack, and Discord, use `/rl` when typing feedback. In OpenClaw, the setup wizard can also enable real held-message reactions; those rate only the captured AI message they target when OpenClaw forwards the reaction and message id:
  
 ```
 /rl good         # positive reward
@@ -166,7 +169,7 @@ For Ollama, train against the matching local/HuggingFace weights and serve throu
 
 Claude Code terminal and Claude Code Desktop share `~/.claude/settings.json`, so one install covers both. Codex CLI and the Codex desktop app use `~/.codex/hooks.json` plus `~/.codex/config.toml`; `reinforceclaw init` writes both and enables `codex_hooks`.
 
-For OpenClaw, run `reinforceclaw init` and select OpenClaw. ReinforceClaw installs the bundled plugin into your existing Gateway, writes the local host/Python config, stores the bridge secret privately under `~/.reinforceclaw`, and exposes `/rl good`, `/rl bad`, `/rl undo`, and `/rl status` in connected channels. The plugin manages only the local Python bridge while OpenClaw is running. You can verify it with:
+For OpenClaw, run `reinforceclaw init` and select OpenClaw. ReinforceClaw installs the bundled safe plugin into your existing Gateway, writes only the local host/secret/feedback-mode config, starts its own local bridge service, and exposes `/rl good`, `/rl bad`, `/rl undo`, and `/rl status` in connected channels. Reaction ratings are owner-scoped in groups, and admin commands stay disabled unless you explicitly allowlist them. The plugin never starts shell commands or reads your environment; the local bridge is managed by ReinforceClaw's own launchd/systemd service. You can verify it with:
 
 ```bash
 openclaw plugins list

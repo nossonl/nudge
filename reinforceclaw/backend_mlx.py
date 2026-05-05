@@ -5,35 +5,43 @@ from __future__ import annotations
 import gc
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 
 _PAGE_SIZE = None
+_DRAIN_BACKEND = None
+_VM_STAT_KEYS = {"Pages free", "Pages inactive", "Pages speculative"}
+_AVAILABLE_CACHE = (0.0, None)
 
 
 def _sysctl_int(name: str) -> int | None:
     try:
-        out = subprocess.check_output(["sysctl", "-n", name], text=True).strip()
+        out = subprocess.check_output(["sysctl", "-n", name], text=True, timeout=2).strip()
         return int(out)
     except Exception:
         return None
 
 
 def _available_bytes() -> int | None:
-    global _PAGE_SIZE
+    global _PAGE_SIZE, _AVAILABLE_CACHE
+    now = time.monotonic()
+    if now - _AVAILABLE_CACHE[0] < 1.0:
+        return _AVAILABLE_CACHE[1]
     try:
         if _PAGE_SIZE is None:
             _PAGE_SIZE = _sysctl_int("hw.pagesize") or 4096
-        out = subprocess.check_output(["vm_stat"], text=True)
-        wanted = {"Pages free", "Pages inactive", "Pages speculative"}
+        out = subprocess.check_output(["vm_stat"], text=True, timeout=2)
         pages = 0
         for line in out.splitlines():
             if ":" not in line:
                 continue
             key, value = line.split(":", 1)
-            if key.strip() in wanted:
+            if key.strip() in _VM_STAT_KEYS:
                 pages += int(value.strip().rstrip("."))
-        return pages * _PAGE_SIZE
+        _AVAILABLE_CACHE = (now, pages * _PAGE_SIZE)
+        return _AVAILABLE_CACHE[1]
     except Exception:
+        _AVAILABLE_CACHE = (now, None)
         return None
 
 
@@ -78,19 +86,17 @@ class MLXBackend:
             return {}
 
     def apply_limits(self, limit_bytes: int, cache_fraction: float = 0.25) -> None:
-        try:
-            self.mx.set_memory_limit(int(limit_bytes))
-        except Exception:
-            pass
-        try:
-            max_wired = int(self.device_info().get("max_recommended_working_set_size") or limit_bytes)
-            self.mx.set_wired_limit(min(int(limit_bytes), max_wired))
-        except Exception:
-            pass
-        try:
-            self.mx.set_cache_limit(max(0, int(limit_bytes * cache_fraction)))
-        except Exception:
-            pass
+        max_wired = int(self.device_info().get("max_recommended_working_set_size") or limit_bytes)
+        for fn, value in (
+            (getattr(self.mx, "set_memory_limit", None), int(limit_bytes)),
+            (getattr(self.mx, "set_wired_limit", None), min(int(limit_bytes), max_wired)),
+            (getattr(self.mx, "set_cache_limit", None), max(0, int(limit_bytes * cache_fraction))),
+        ):
+            try:
+                if callable(fn):
+                    fn(value)
+            except Exception:
+                pass
 
     def active_memory_bytes(self) -> int:
         try:
@@ -120,11 +126,11 @@ class MLXBackend:
             pass
 
     def clear_cache(self) -> None:
-        try:
-            self.mx.clear_cache()
-        except Exception:
+        for fn in (getattr(self.mx, "clear_cache", None), getattr(getattr(self.mx, "metal", None), "clear_cache", None)):
             try:
-                self.mx.metal.clear_cache()
+                if callable(fn):
+                    fn()
+                    return
             except Exception:
                 pass
 
@@ -153,8 +159,10 @@ class MLXBackend:
 
 def mlx_drain(*, collect_garbage: bool = False) -> None:
     """Best-effort MLX/Metal cleanup for transient inference or teardown."""
+    global _DRAIN_BACKEND
     try:
-        backend = MLXBackend()
+        backend = _DRAIN_BACKEND or MLXBackend()
+        _DRAIN_BACKEND = backend
     except Exception:
         return
     backend.synchronize()
